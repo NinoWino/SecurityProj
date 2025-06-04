@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="hero-section">
+    <div class="container">
+        <div class="row justify-content-center text-center">
+            <div class="col-lg-8">
+                <h1 class="hero-title">Discover Amazing Collectibles at Collective</h1>
+                <p class="hero-subtitle">Shop the latest trends, carefully selected for you </p>
+                <a href="#products" class="btn-primary-minimal">Shop Collection</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features Section -->
+<section class="py-5 border-bottom">
+    <div class="container">
+        <div class="row">
+            <div class="col-md-4 text-center mb-4">
+                <div class="feature-icon mx-auto">
+                    <i class="bi bi-truck text-primary fs-3"></i>
+                </div>
+                <h5>Free Shipping</h5>
+                <p class="text-muted">On orders over $100</p>
+            </div>
+            <div class="col-md-4 text-center mb-4">
+                <div class="feature-icon mx-auto">
+                    <i class="bi bi-shield-check text-primary fs-3"></i>
+                </div>
+                <h5>Secure Payment</h5>
+                <p class="text-muted">100% secure transactions</p>
+            </div>
+            <div class="col-md-4 text-center mb-4">
+                <div class="feature-icon mx-auto">
+                    <i class="bi bi-arrow-repeat text-primary fs-3"></i>
+                </div>
+                <h5>Easy Returns</h5>
+                <p class="text-muted">30-day return policy</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer" id="contact">
+    <div class="container">
+        <div class="footer-content">
+            <div class="footer-links">
+                <a href="#">About</a>
+                <a href="#">Contact</a>
+                <a href="#">Shipping</a>
+                <a href="#">Returns</a>
+            </div>
+            <p>&copy; 2024 Collective. All rights reserved.</p>
+        </div>
+    </div>
+</footer>
+
+
+<!-- Cart Offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="cartOffcanvas" aria-labelledby="cartOffcanvasLabel">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title" id="cartOffcanvasLabel">Cart</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column">
+        <div id="cartItems" class="flex-grow-1">
+            <p class="text-muted text-center">Your cart is empty</p>
+        </div>
+        <div class="cart-total mt-auto">
+            <div class="d-flex justify-content-between mb-3">
+                <span>Total</span>
+                <strong id="cartTotal">$0</strong>
+            </div>
+            <button class="btn-primary-minimal w-100">Checkout</button>
+        </div>
+    </div>
+</div>
+{% endblock %}

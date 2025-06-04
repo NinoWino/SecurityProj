@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+ <section class="contact-section text-center">
+    <div class="container">
+      <h2 class="contact-header">Get in Touch</h2>
+      <p class="contact-subtext">We'd love to hear from you. Please fill out the form below.</p>
+
+      <div class="row justify-content-center">
+        <div class="col-md-6 text-start">
+          <form>
+            <div class="mb-3">
+              <label for="name" class="form-label">Your Name</label>
+              <input type="text" class="form-control" id="name" placeholder="Enter your name">
+            </div>
+            <div class="mb-3">
+              <label for="email" class="form-label">Email address</label>
+              <input type="email" class="form-control" id="email" placeholder="name@example.com">
+            </div>
+            <div class="mb-3">
+              <label for="message" class="form-label">Message</label>
+              <textarea class="form-control" id="message" rows="5" placeholder="Write your message here..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-black px-4">Send Message</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f9f9f9;
+      color: #333;
+    }
+
+    .contact-section {
+      padding: 80px 20px;
+    }
+
+    .contact-header {
+      font-size: 2rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+
+    .contact-subtext {
+      color: #666;
+      margin-bottom: 40px;
+    }
+
+    .form-control:focus {
+      box-shadow: none;
+      border-color: #000;
+    }
+
+    .btn-black {
+      background-color: #000;
+      color: #fff;
+      border-radius: 0;
+    }
+
+    .btn-black:hover {
+      background-color: #222;
+    }
+
+    .form-label {
+      font-weight: 500;
+    }
+  </style>
+{% endblock %}
