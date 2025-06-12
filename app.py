@@ -1,25 +1,24 @@
 from flask import Flask, render_template
-from sqlalchemy import create_engine, Column, Integer, String, Boolean
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-# RENFRED PLEASE FILL IN
-DATABASE_URL = "mysql+mysqlconnector://username:password@localhost:3306/your_database"
-
-engine = create_engine(DATABASE_URL, echo=True)
-Base = declarative_base()
-Session = sessionmaker(bind=engine)
-session = Session()
+from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
 
+# ✅ Config for Flask-SQLAlchemy
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://username:password@localhost:3306/your_database'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'super-secret'
+
+# ✅ Initialize Flask-SQLAlchemy
+db = SQLAlchemy(app)
+
+# ✅ Import models (after db is defined)
+from models import User  # Or define your models right here
+
+# ✅ Optional: Create tables automatically
+with app.app_context():
+    db.create_all()
+
+# ✅ Routes
 @app.route('/')
 def home():
     return render_template('home.html')
