@@ -12,7 +12,7 @@ app.config['SECRET_KEY'] = 'super-secret'
 db = SQLAlchemy(app)
 
 # ✅ Import models (after db is defined)
-from models import User  # Or define your models right here
+from models import User
 
 # ✅ Optional: Create tables automatically
 with app.app_context():
