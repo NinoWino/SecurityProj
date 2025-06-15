@@ -4,7 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 app = Flask(__name__)
 
 # ✅ Config for Flask-SQLAlchemy
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://username:password@localhost:3306/your_database'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://securityprojuser:Mysql123@127.0.0.1:3306/securityproject'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
 
@@ -12,7 +12,7 @@ app.config['SECRET_KEY'] = 'super-secret'
 db = SQLAlchemy(app)
 
 # ✅ Import models (after db is defined)
-from models import User
+# from models import User
 
 # ✅ Optional: Create tables automatically
 with app.app_context():
