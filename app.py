@@ -41,19 +41,22 @@ def home():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    error = None
     if request.method == 'POST':
         email = request.form['email']
         password = request.form['password']
         user = User.query.filter_by(email=email).first()
 
-        if user and check_password_hash(user.password, password):
-            login_user(user)
-            flash('Login successful!', 'success')
-            return redirect(url_for('home'))
+        if not user:
+            error = 'Email not found. Please try again.'
+        elif not check_password_hash(user.password, password):
+            error = 'Incorrect password. Please try again.'
         else:
-            flash('Invalid email or password', 'danger')
+            login_user(user)
+            return redirect(url_for('profile'))
 
-    return render_template('login.html')
+    return render_template('login.html', error=error)
+
 
 @app.route('/logout')
 @login_required
@@ -66,7 +69,13 @@ def logout():
 def register():
     return render_template('register.html')
 
+@app.route('/profile')
+@login_required
+def profile():
+    return render_template("profile.html")
+
 @app.route('/product')
+@login_required
 def product():
     return render_template('product.html')
 
