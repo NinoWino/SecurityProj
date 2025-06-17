@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash
 from models import db, User
+from forms import LoginForm
 
 
 app = Flask(__name__)
@@ -11,6 +12,10 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://securityprojuser:Mysql123@127.0.0.1:3306/securityproject'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
+app.config['RECAPTCHA_PUBLIC_KEY'] = '6LfGqGMrAAAAAIKvHI9aL0ZD-8xbP2LhPRSZPp3n'
+app.config['RECAPTCHA_PRIVATE_KEY'] = '6LfGqGMrAAAAAOwHdibEUSMjteGZjVlBo72hjJx9'
+app.config['WTF_CSRF_ENABLED'] = True
+
 db.init_app(app)
 
 # CREATE TABLE user (
@@ -41,22 +46,23 @@ def home():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    form = LoginForm()
     error = None
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
+
+    if form.validate_on_submit():
+        email = form.email.data
+        password = form.password.data
         user = User.query.filter_by(email=email).first()
 
         if not user:
-            error = 'Email not found. Please try again.'
+            error = 'Email not found.'
         elif not check_password_hash(user.password, password):
-            error = 'Incorrect password. Please try again.'
+            error = 'Incorrect password.'
         else:
             login_user(user)
             return redirect(url_for('profile'))
 
-    return render_template('login.html', error=error)
-
+    return render_template('login.html', form=form, error=error)
 
 @app.route('/logout')
 @login_required
