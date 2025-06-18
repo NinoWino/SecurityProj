@@ -1,22 +1,26 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from flask_login import (
+    LoginManager, login_user, logout_user,
+    login_required, current_user
+)
 from werkzeug.security import check_password_hash
 from models import db, User
 from forms import LoginForm
-
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# ✅ Config for Flask-SQLAlchemy
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://securityprojuser:Mysql123@127.0.0.1:3306/securityproject'
+# Config
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    'mysql+mysqlconnector://securityprojuser:Mysql123'
+    '@127.0.0.1:3306/securityproject'
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
 app.config['RECAPTCHA_PUBLIC_KEY'] = '6LfGqGMrAAAAAIKvHI9aL0ZD-8xbP2LhPRSZPp3n'
 app.config['RECAPTCHA_PRIVATE_KEY'] = '6LfGqGMrAAAAAOwHdibEUSMjteGZjVlBo72hjJx9'
 app.config['WTF_CSRF_ENABLED'] = True
-
-db.init_app(app)
 
 # CREATE TABLE user (
 #     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -27,9 +31,22 @@ db.init_app(app)
 # );
 # INSERT INTO user (username, email, password, is_staff)
 # VALUES ('test', 'test@gmail.com', 'test123', FALSE);
-
+# ALTER TABLE user DROP COLUMN failed_attempts;
+# ALTER TABLE user DROP COLUMN last_failed_login;
+# ALTER TABLE user DROP COLUMN is_locked;
 # from werkzeug.security import generate_password_hash
 # print(generate_password_hash("test123"))
+
+# Session timeout settings
+app.permanent_session_lifetime = timedelta(seconds=30)
+
+# Secure cookies
+app.config.update({
+    "SESSION_COOKIE_HTTPONLY": True,
+    "SESSION_COOKIE_SAMESITE": "Lax"
+})
+
+db.init_app(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -39,7 +56,27 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# ✅ Routes
+@login_manager.unauthorized_handler
+def on_unauthorized():
+    if session.get('last_active'):
+        return redirect(url_for('login', message='timeout'))
+    return redirect(url_for('login'))
+
+
+@app.before_request
+def check_session_timeout():
+    if current_user.is_authenticated:
+        now = datetime.utcnow()
+        last_active = session.get('last_active')
+        if last_active:
+            last_active = datetime.fromisoformat(last_active)
+            if now - last_active > timedelta(seconds=30):
+                logout_user()
+                session.clear()
+                return redirect(url_for('login', message='timeout'))
+        session['last_active'] = now.isoformat()
+
+# Routes
 @app.route('/')
 def home():
     return render_template('home.html')
@@ -48,28 +85,46 @@ def home():
 def login():
     form = LoginForm()
     error = None
-
+    LOCK_DURATION = timedelta(seconds=20)
+    MAX_ATTEMPTS = 3
     if form.validate_on_submit():
         email = form.email.data
         password = form.password.data
         user = User.query.filter_by(email=email).first()
-
-        if not user:
-            error = 'Email not found.'
-        elif not check_password_hash(user.password, password):
-            error = 'Incorrect password.'
+        if user:
+            if user.is_locked:
+                if (user.last_failed_login and
+                    datetime.utcnow() - user.last_failed_login >= LOCK_DURATION):
+                    user.failed_attempts = 0
+                    user.is_locked = False
+                    db.session.commit()
+                else:
+                    error = "Your account is temporarily locked. Please try again later."
+                    return render_template('login.html', form=form, error=error)
+            if check_password_hash(user.password, password):
+                login_user(user)
+                session['last_active'] = datetime.utcnow().isoformat()
+                user.failed_attempts = 0
+                db.session.commit()
+                return redirect(url_for('profile'))
+            else:
+                user.failed_attempts += 1
+                user.last_failed_login = datetime.utcnow()
+                if user.failed_attempts >= MAX_ATTEMPTS:
+                    user.is_locked = True
+                db.session.commit()
+                error = 'Incorrect password or email.'
         else:
-            login_user(user)
-            return redirect(url_for('profile'))
-
-    return render_template('login.html', form=form, error=error)
+            error = 'Email not found.'
+    message = request.args.get('message')
+    return render_template('login.html', form=form, error=error, message=message)
 
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
-    flash('Logged out.', 'info')
-    return redirect(url_for('login'))
+    session.clear()
+    return redirect(url_for('login', message='logged_out'))
 
 @app.route('/register')
 def register():
@@ -78,7 +133,7 @@ def register():
 @app.route('/profile')
 @login_required
 def profile():
-    return render_template("profile.html")
+    return render_template('profile.html')
 
 @app.route('/product')
 @login_required
@@ -95,3 +150,5 @@ def contact():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
