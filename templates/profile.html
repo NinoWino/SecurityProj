@@ -19,7 +19,8 @@
           </tr>
         </tbody>
       </table>
-      <div class="mt-4 text-end">
+      <div class="mt-4 d-flex justify-content-end gap-2">
+        <a href="{{ url_for('change_password') }}" class="btn btn-secondary">Change Password</a>
         <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
       </div>
     </div>

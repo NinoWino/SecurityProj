@@ -4,9 +4,9 @@ from flask_login import (
     LoginManager, login_user, logout_user,
     login_required, current_user
 )
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm
+from forms import LoginForm, ChangePasswordForm
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -47,6 +47,14 @@ app.config.update({
 })
 
 db.init_app(app)
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -125,6 +133,31 @@ def logout():
     logout_user()
     session.clear()
     return redirect(url_for('login', message='logged_out'))
+
+@app.route('/change_password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    form = ChangePasswordForm()
+    error = None
+
+    if form.validate_on_submit():
+        # Verify current password
+        if not check_password_hash(current_user.password, form.old_password.data):
+            error = 'Current password is incorrect.'
+        # Prevent new password == old password
+        elif check_password_hash(current_user.password, form.new_password.data):
+            error = 'New password must be different from the old password.'
+        else:
+            # Hash and save the new password
+            current_user.password = generate_password_hash(form.new_password.data)
+            db.session.commit()
+
+            # Invalidate session and force re-login
+            logout_user()
+            session.clear()
+            return redirect(url_for('login', message='pw_changed'))
+
+    return render_template('change_password.html', form=form, error=error)
 
 @app.route('/register')
 def register():

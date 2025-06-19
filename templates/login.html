@@ -35,6 +35,10 @@
         <div class="alert alert-warning mt-3">
           You were logged out due to inactivity. Please log in again.
         </div>
+      {% elif message == 'pw_changed' %}
+        <div class="alert alert-success mt-3">
+          Your password was changed. Please log in again.
+        </div>
       {% endif %}
 
 
