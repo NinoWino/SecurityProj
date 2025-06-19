@@ -13,6 +13,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
 db.init_app(app)
 
+# INSERT THIS INTO MYSQL WORKBENCH FOR THE TABLE
 # CREATE TABLE user (
 #     id INT PRIMARY KEY AUTO_INCREMENT,
 #     username VARCHAR(50) NOT NULL UNIQUE,
@@ -22,7 +23,9 @@ db.init_app(app)
 # );
 # INSERT INTO user (username, email, password, is_staff)
 # VALUES ('test', 'test@gmail.com', 'test123', FALSE);
-
+# ALTER TABLE user DROP COLUMN failed_attempts;
+# ALTER TABLE user DROP COLUMN last_failed_login;
+# ALTER TABLE user DROP COLUMN is_locked;
 # from werkzeug.security import generate_password_hash
 # print(generate_password_hash("test123"))
 
