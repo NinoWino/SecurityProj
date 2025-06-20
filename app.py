@@ -35,20 +35,31 @@ app.config['RECAPTCHA_PUBLIC_KEY'] = '6LfGqGMrAAAAAIKvHI9aL0ZD-8xbP2LhPRSZPp3n'
 app.config['RECAPTCHA_PRIVATE_KEY'] = '6LfGqGMrAAAAAOwHdibEUSMjteGZjVlBo72hjJx9'
 app.config['WTF_CSRF_ENABLED'] = True
 
-# CREATE TABLE user (
-#     id INT PRIMARY KEY AUTO_INCREMENT,
-#     username VARCHAR(50) NOT NULL UNIQUE,
-#     email VARCHAR(100) NOT NULL UNIQUE,
-#     password VARCHAR(255) NOT NULL,
-#     is_staff BOOLEAN DEFAULT FALSE
-# );
-# INSERT INTO user (username, email, password, is_staff)
-# VALUES ('test', 'test@gmail.com', 'test123', FALSE);
-# ALTER TABLE user DROP COLUMN failed_attempts;
-# ALTER TABLE user DROP COLUMN last_failed_login;
-# ALTER TABLE user DROP COLUMN is_locked;
-# ALTER TABLE user
-#   ADD COLUMN two_factor_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+# -- 1) Create DB (if needed) and switch to it
+# CREATE DATABASE IF NOT EXISTS securityproject;
+# USE securityproject;
+#
+# -- 2) Drop & re-create the user table from scratch
+# DROP TABLE IF EXISTS `user`;
+# CREATE TABLE `user` (
+#   `id`                 INT           NOT NULL AUTO_INCREMENT,
+#   `username`           VARCHAR(50)   NOT NULL UNIQUE,
+#   `email`              VARCHAR(100)  NOT NULL UNIQUE,
+#   `password`           VARCHAR(255)  NOT NULL,
+#   `is_staff`           BOOLEAN       NOT NULL DEFAULT FALSE,
+#
+#   -- account lockout
+#   `failed_attempts`    INT           NOT NULL DEFAULT 0,
+#   `last_failed_login`  DATETIME      NULL,
+#   `is_locked`          BOOLEAN       NOT NULL DEFAULT FALSE,
+#
+#   -- email-OTP 2FA
+#   `two_factor_enabled` BOOLEAN       NOT NULL DEFAULT TRUE,
+#   `otp_code`           VARCHAR(6)    NULL,
+#   `otp_expiry`         DATETIME      NULL,
+#
+#   PRIMARY KEY (`id`)
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 # from werkzeug.security import generate_password_hash
 # print(generate_password_hash("test123"))
