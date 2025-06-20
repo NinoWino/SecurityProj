@@ -13,18 +13,18 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
 db.init_app(app)
 
-# -- 1) Create DB (if needed) and switch to it
+# -- 1) Create the database if it doesn't exist, then switch to it
 # CREATE DATABASE IF NOT EXISTS securityproject;
 # USE securityproject;
 #
-# -- 2) Drop & re-create the user table from scratch
+# -- 2) Drop & re-create the `user` table with all required fields
 # DROP TABLE IF EXISTS `user`;
 # CREATE TABLE `user` (
 #   `id`                 INT           NOT NULL AUTO_INCREMENT,
 #   `username`           VARCHAR(50)   NOT NULL UNIQUE,
 #   `email`              VARCHAR(100)  NOT NULL UNIQUE,
 #   `password`           VARCHAR(255)  NOT NULL,
-#   `is_staff`           BOOLEAN       NOT NULL DEFAULT FALSE,
+#   `role`               VARCHAR(20)   NOT NULL DEFAULT 'user',       -- 'user', 'staff', or 'admin'
 #
 #   -- account lockout
 #   `failed_attempts`    INT           NOT NULL DEFAULT 0,
@@ -38,19 +38,15 @@ db.init_app(app)
 #
 #   PRIMARY KEY (`id`)
 # ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-# INSERT INTO `user` (
-#   username, email, password, is_staff
-# )
+#
+# -- 3) Insert a test user (password = 'test123')
+# INSERT INTO `user` (username, email, password, role)
 # VALUES (
 #   'test',
 #   'test@gmail.com',
 #   '$pbkdf2-sha256$600000$FQ63b3nGvWBqTGMArLvTFw$QnHo9VCzF7Q6qommbhrkCujk82MTO3aQr8J3MOGEi7k',
-#   FALSE
+#   'user'
 # );
-
-# from werkzeug.security import generate_password_hash
-# print(generate_password_hash("test123"))
 
 login_manager = LoginManager()
 login_manager.init_app(app)
