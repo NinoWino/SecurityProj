@@ -35,41 +35,56 @@ app.config['RECAPTCHA_PUBLIC_KEY'] = '6LfGqGMrAAAAAIKvHI9aL0ZD-8xbP2LhPRSZPp3n'
 app.config['RECAPTCHA_PRIVATE_KEY'] = '6LfGqGMrAAAAAOwHdibEUSMjteGZjVlBo72hjJx9'
 app.config['WTF_CSRF_ENABLED'] = True
 
-# -- 1) Create the database if it doesn't exist, then switch to it
+# -- Step 1: Create the database if not already present
 # CREATE DATABASE IF NOT EXISTS securityproject;
 # USE securityproject;
 #
-# -- 2) Drop & re-create the `user` table with all required fields
+# -- Step 2: Drop tables if they exist (in correct dependency order)
 # DROP TABLE IF EXISTS `user`;
-# CREATE TABLE `user` (
-#   `id`                 INT           NOT NULL AUTO_INCREMENT,
-#   `username`           VARCHAR(50)   NOT NULL UNIQUE,
-#   `email`              VARCHAR(100)  NOT NULL UNIQUE,
-#   `password`           VARCHAR(255)  NOT NULL,
-#   `role`               VARCHAR(20)   NOT NULL DEFAULT 'user',       -- 'user', 'staff', or 'admin'
+# DROP TABLE IF EXISTS `roles`;
 #
-#   -- account lockout
-#   `failed_attempts`    INT           NOT NULL DEFAULT 0,
-#   `last_failed_login`  DATETIME      NULL,
-#   `is_locked`          BOOLEAN       NOT NULL DEFAULT FALSE,
-#
-#   -- email-OTP 2FA
-#   `two_factor_enabled` BOOLEAN       NOT NULL DEFAULT TRUE,
-#   `otp_code`           VARCHAR(6)    NULL,
-#   `otp_expiry`         DATETIME      NULL,
-#
-#   PRIMARY KEY (`id`)
+# -- Step 3: Create roles table
+# CREATE TABLE `roles` (
+#   id   INT AUTO_INCREMENT PRIMARY KEY,
+#   name VARCHAR(20) UNIQUE NOT NULL
 # ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 #
-# -- 3) Insert a test user (password = 'test123')
-# INSERT INTO `user` (username, email, password, role)
+# -- Step 4: Insert default roles
+# INSERT INTO `roles` (name) VALUES
+#   ('user'),
+#   ('staff'),
+#   ('admin');
+#
+# -- Step 5: Create user table and link role_id to roles table
+# CREATE TABLE `user` (
+#   id                 INT AUTO_INCREMENT PRIMARY KEY,
+#   username           VARCHAR(50)  NOT NULL UNIQUE,
+#   email              VARCHAR(100) NOT NULL UNIQUE,
+#   password           VARCHAR(255) NOT NULL,
+#
+#   role_id            INT NOT NULL DEFAULT 1,
+#   FOREIGN KEY (role_id) REFERENCES `roles`(id),
+#
+#   failed_attempts    INT          NOT NULL DEFAULT 0,
+#   last_failed_login  DATETIME     NULL,
+#   is_locked          BOOLEAN      NOT NULL DEFAULT FALSE,
+#   two_factor_enabled BOOLEAN      NOT NULL DEFAULT TRUE,
+#   otp_code           VARCHAR(6),
+#   otp_expiry         DATETIME
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+#
+# -- Step 6: Insert a sample user (password = 'test123', role = 'user')
+# -- Replace the hash below with your generated password hash if needed
+# INSERT INTO `user` (username, email, password, role_id)
 # VALUES (
 #   'test',
 #   'test@gmail.com',
-#   '$pbkdf2-sha256$600000$FQ63b3nGvWBqTGMArLvTFw$QnHo9VCzF7Q6qommbhrkCujk82MTO3aQr8J3MOGEi7k',
-#   'user'
+#   'hashed password',
+# -- print(generate_password_hash('test123'))
+#   1  -- user role
 # );
 
+print (generate_password_hash('test123'))
 # Session timeout settings
 app.permanent_session_lifetime = timedelta(seconds=30)
 
