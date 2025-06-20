@@ -111,15 +111,6 @@ def check_session_timeout():
                 return redirect(url_for('login', message='timeout'))
         session['last_active'] = now.isoformat()
 
-@app.route('/toggle_2fa', methods=['POST'])
-@login_required
-def toggle_2fa():
-    form = Toggle2FAForm()
-    if form.validate_on_submit():
-        current_user.two_factor_enabled = not current_user.two_factor_enabled
-        db.session.commit()
-    return redirect(url_for('profile'))
-
 # Routes
 @app.route('/')
 def home():
@@ -193,7 +184,7 @@ def login():
     return render_template('login.html',
                            form=form,
                            error=error,
-                           message=request.args.get('message'))
+                           message=request.args.get('message'))\
 
 @app.route('/logout')
 @login_required
@@ -226,6 +217,15 @@ def change_password():
             return redirect(url_for('login', message='pw_changed'))
 
     return render_template('change_password.html', form=form, error=error)
+
+@app.route('/toggle_2fa', methods=['POST'])
+@login_required
+def toggle_2fa():
+    form = Toggle2FAForm()
+    if form.validate_on_submit():
+        current_user.two_factor_enabled = not current_user.two_factor_enabled
+        db.session.commit()
+    return redirect(url_for('profile'))
 
 @app.route('/two_factor', methods=['GET', 'POST'])
 def two_factor():
