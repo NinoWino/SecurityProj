@@ -13,15 +13,41 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
 db.init_app(app)
 
-# CREATE TABLE user (
-#     id INT PRIMARY KEY AUTO_INCREMENT,
-#     username VARCHAR(50) NOT NULL UNIQUE,
-#     email VARCHAR(100) NOT NULL UNIQUE,
-#     password VARCHAR(255) NOT NULL,
-#     is_staff BOOLEAN DEFAULT FALSE
+# -- 1) Create DB (if needed) and switch to it
+# CREATE DATABASE IF NOT EXISTS securityproject;
+# USE securityproject;
+#
+# -- 2) Drop & re-create the user table from scratch
+# DROP TABLE IF EXISTS `user`;
+# CREATE TABLE `user` (
+#   `id`                 INT           NOT NULL AUTO_INCREMENT,
+#   `username`           VARCHAR(50)   NOT NULL UNIQUE,
+#   `email`              VARCHAR(100)  NOT NULL UNIQUE,
+#   `password`           VARCHAR(255)  NOT NULL,
+#   `is_staff`           BOOLEAN       NOT NULL DEFAULT FALSE,
+#
+#   -- account lockout
+#   `failed_attempts`    INT           NOT NULL DEFAULT 0,
+#   `last_failed_login`  DATETIME      NULL,
+#   `is_locked`          BOOLEAN       NOT NULL DEFAULT FALSE,
+#
+#   -- email-OTP 2FA
+#   `two_factor_enabled` BOOLEAN       NOT NULL DEFAULT TRUE,
+#   `otp_code`           VARCHAR(6)    NULL,
+#   `otp_expiry`         DATETIME      NULL,
+#
+#   PRIMARY KEY (`id`)
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+# INSERT INTO `user` (
+#   username, email, password, is_staff
+# )
+# VALUES (
+#   'test',
+#   'test@gmail.com',
+#   '$pbkdf2-sha256$600000$FQ63b3nGvWBqTGMArLvTFw$QnHo9VCzF7Q6qommbhrkCujk82MTO3aQr8J3MOGEi7k',
+#   FALSE
 # );
-# INSERT INTO user (username, email, password, is_staff)
-# VALUES ('test', 'test@gmail.com', 'test123', FALSE);
 
 # from werkzeug.security import generate_password_hash
 # print(generate_password_hash("test123"))
