@@ -6,11 +6,24 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, ChangePasswordForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm
 from datetime import datetime, timedelta
+import random
+from flask_mail import Mail, Message
 
 app = Flask(__name__)
+# … your existing config …
+app.config.update({
+  # example using Gmail SMTP; adapt to your provider
+  'MAIL_SERVER':   'smtp.gmail.com',
+  'MAIL_PORT':     587,
+  'MAIL_USE_TLS':  True,
+  'MAIL_USERNAME': 'usertestuser919@gmail.com',
+  'MAIL_PASSWORD': 'lyqv gadp uqqo jymb',
+  'MAIL_DEFAULT_SENDER': 'No Reply <testusertest919+no-reply@gmail.com>'
+})
 
+mail = Mail(app)
 # Config
 app.config['SQLALCHEMY_DATABASE_URI'] = (
     'mysql+mysqlconnector://securityprojuser:Mysql123'
@@ -34,9 +47,12 @@ app.config['WTF_CSRF_ENABLED'] = True
 # ALTER TABLE user DROP COLUMN failed_attempts;
 # ALTER TABLE user DROP COLUMN last_failed_login;
 # ALTER TABLE user DROP COLUMN is_locked;
+# ALTER TABLE user
+#   ADD COLUMN two_factor_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
 # from werkzeug.security import generate_password_hash
 # print(generate_password_hash("test123"))
-
+# print(generate_password_hash("test123"))
 # Session timeout settings
 app.permanent_session_lifetime = timedelta(seconds=30)
 
@@ -84,6 +100,15 @@ def check_session_timeout():
                 return redirect(url_for('login', message='timeout'))
         session['last_active'] = now.isoformat()
 
+@app.route('/toggle_2fa', methods=['POST'])
+@login_required
+def toggle_2fa():
+    form = Toggle2FAForm()
+    if form.validate_on_submit():
+        current_user.two_factor_enabled = not current_user.two_factor_enabled
+        db.session.commit()
+    return redirect(url_for('profile'))
+
 # Routes
 @app.route('/')
 def home():
@@ -91,41 +116,73 @@ def home():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    form = LoginForm()
+    # If they’re already logged in, send them home
+    if current_user.is_authenticated:
+        return redirect(url_for('profile'))
+    form  = LoginForm()
     error = None
+
+    # Lockout policy
     LOCK_DURATION = timedelta(seconds=20)
-    MAX_ATTEMPTS = 3
+    MAX_ATTEMPTS  = 3
+
     if form.validate_on_submit():
-        email = form.email.data
-        password = form.password.data
-        user = User.query.filter_by(email=email).first()
+        user = User.query.filter_by(email=form.email.data).first()
+
         if user:
+            # Account lockout
             if user.is_locked:
-                if (user.last_failed_login and
-                    datetime.utcnow() - user.last_failed_login >= LOCK_DURATION):
+                last = user.last_failed_login
+                if last and datetime.utcnow() - last >= LOCK_DURATION:
                     user.failed_attempts = 0
-                    user.is_locked = False
+                    user.is_locked       = False
                     db.session.commit()
                 else:
-                    error = "Your account is temporarily locked. Please try again later."
-                    return render_template('login.html', form=form, error=error)
-            if check_password_hash(user.password, password):
+                    error = "Account locked. Please try again later."
+                    return render_template('login.html',
+                                           form=form, error=error)
+
+            # Password validation
+            if check_password_hash(user.password, form.password.data):
+                # Email‐OTP 2FA
+                if user.two_factor_enabled:
+                    code = f"{random.randint(0, 999999):06d}"
+                    user.otp_code   = code
+                    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                    db.session.commit()
+
+                    msg = Message(
+                        subject="Your One-Time Login Code",
+                        recipients=[user.email],
+                        body=f"Hello {user.username},\n\nYour login code is: {code}\n\n"
+                             "It expires in 5 minutes."
+                    )
+                    mail.send(msg)
+
+                    session['pre_2fa_user_id'] = user.id
+                    return redirect(url_for('two_factor'))
+
+                # No 2FA: complete login
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
-                user.failed_attempts = 0
+                user.failed_attempts   = 0
                 db.session.commit()
                 return redirect(url_for('profile'))
-            else:
-                user.failed_attempts += 1
-                user.last_failed_login = datetime.utcnow()
-                if user.failed_attempts >= MAX_ATTEMPTS:
-                    user.is_locked = True
-                db.session.commit()
-                error = 'Incorrect password or email.'
+
+            # Wrong password
+            user.failed_attempts   += 1
+            user.last_failed_login  = datetime.utcnow()
+            if user.failed_attempts >= MAX_ATTEMPTS:
+                user.is_locked = True
+            db.session.commit()
+            error = 'Incorrect email or password.'
         else:
             error = 'Email not found.'
-    message = request.args.get('message')
-    return render_template('login.html', form=form, error=error, message=message)
+
+    return render_template('login.html',
+                           form=form,
+                           error=error,
+                           message=request.args.get('message'))
 
 @app.route('/logout')
 @login_required
@@ -159,6 +216,67 @@ def change_password():
 
     return render_template('change_password.html', form=form, error=error)
 
+@app.route('/two_factor', methods=['GET', 'POST'])
+def two_factor():
+    user_id = session.get('pre_2fa_user_id')
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = User.query.get(user_id)
+    form = OTPForm()
+    error = None
+
+    if form.validate_on_submit():
+        token = form.token.data.strip()
+        if not user.otp_expiry or datetime.utcnow() > user.otp_expiry:
+            error = 'Code expired. Please log in again.'
+            session.pop('pre_2fa_user_id', None)
+        elif token != user.otp_code:
+            error = 'Invalid code. Please try again.'
+        else:
+            # Successful 2FA
+            login_user(user)
+            session.pop('pre_2fa_user_id', None)
+            session['last_active'] = datetime.utcnow().isoformat()
+            user.failed_attempts   = 0
+            user.otp_code          = None
+            user.otp_expiry        = None
+            db.session.commit()
+            return redirect(url_for('profile'))
+
+    resent = bool(request.args.get('resent'))
+
+    return render_template('two_factor.html', form=form, error=error, resent=resent)
+
+@app.route('/resend_code')
+def resend_code():
+    user_id = session.get('pre_2fa_user_id')
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = User.query.get(user_id)
+
+    # generate & store new code
+    code = f"{random.randint(0, 999999):06d}"
+    user.otp_code   = code
+    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+    db.session.commit()
+
+    # email it out
+    msg = Message(
+        subject="Your One-Time Login Code (Resent)",
+        recipients=[user.email],
+        body=(
+            f"Hello {user.username},\n\n"
+            f"Your new login code is: {code}\n\n"
+            "It expires in 5 minutes."
+        )
+    )
+    mail.send(msg)
+
+    # redirect back with a flag
+    return redirect(url_for('two_factor', resent=1))
+
 @app.route('/register')
 def register():
     return render_template('register.html')
@@ -166,7 +284,9 @@ def register():
 @app.route('/profile')
 @login_required
 def profile():
-    return render_template('profile.html')
+    toggle_form = Toggle2FAForm()
+    return render_template('profile.html',
+                           toggle_form=toggle_form)
 
 @app.route('/product')
 @login_required

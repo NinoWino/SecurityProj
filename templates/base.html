@@ -70,24 +70,24 @@
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
-    <!-- Auto-redirect to login on inactivity (only when logged in) -->
-    {% if current_user.is_authenticated %}
-    <script>
-      (function() {
-        const idleSeconds = 30;
-        let idleTimer;
-        const resetTimer = () => {
-          clearTimeout(idleTimer);
-          idleTimer = setTimeout(() => {
-            window.location = "{{ url_for('login', message='timeout') }}";
-          }, idleSeconds * 1000);
-        };
-        ['click','mousemove','keydown','scroll','touchstart'].forEach(evt => {
-          document.addEventListener(evt, resetTimer);
-        });
-        resetTimer();
-      })();
-    </script>
+     {% if current_user.is_authenticated %}
+        <script>
+          (function() {
+            // 30-second timeout for demo (use 1800 for 30min)
+            const idleSeconds = 30;
+            let idleTimer;
+            const resetTimer = () => {
+              clearTimeout(idleTimer);
+              idleTimer = setTimeout(() => {
+                window.location = "{{ url_for('login', message='timeout') }}";
+              }, idleSeconds * 1000);
+            };
+            ['click','mousemove','keydown','scroll','touchstart']
+              .forEach(evt => document.addEventListener(evt, resetTimer));
+            resetTimer();
+          })();
+        </script>
     {% endif %}
+
 </body>
 </html>

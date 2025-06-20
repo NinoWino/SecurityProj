@@ -19,10 +19,29 @@
           </tr>
         </tbody>
       </table>
-      <div class="mt-4 d-flex justify-content-end gap-2">
-        <a href="{{ url_for('change_password') }}" class="btn btn-secondary">Change Password</a>
-        <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
-      </div>
+          <div class="mt-4 d-flex justify-content-end gap-2">
+      <a href="{{ url_for('change_password') }}" class="btn btn-secondary">
+        Change Password
+      </a>
+
+      <form method="POST" action="{{ url_for('toggle_2fa') }}" class="d-inline">
+        {{ toggle_form.hidden_tag() }}
+        {% if current_user.two_factor_enabled %}
+          <button type="submit" class="btn btn-outline-warning">
+            Disable 2FA
+          </button>
+        {% else %}
+          <button type="submit" class="btn btn-outline-success">
+            Enable 2FA
+          </button>
+        {% endif %}
+      </form>
+
+      <a href="{{ url_for('logout') }}" class="btn btn-danger">
+        Logout
+      </a>
+    </div>
+
     </div>
   </div>
 </div>

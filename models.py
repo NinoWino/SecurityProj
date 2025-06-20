@@ -13,3 +13,6 @@ class User(UserMixin, db.Model):
     failed_attempts = db.Column(db.Integer, default=0)
     last_failed_login = db.Column(db.DateTime)
     is_locked = db.Column(db.Boolean, default=False)
+    two_factor_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    otp_code = db.Column(db.String(6), nullable=True)
+    otp_expiry = db.Column(db.DateTime, nullable=True)
