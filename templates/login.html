@@ -20,7 +20,9 @@
           </span>
         </div>
       </div>
-
+      <p class="mb-3">
+        <a href="{{ url_for('forgot_password') }}" class="text-decoration-none">Forgot Password?</a>
+      </p>
       <div class="mb-3">
         {{ form.recaptcha }}
         {% for error in form.recaptcha.errors %}
@@ -45,10 +47,16 @@
           Your password was changed. Please log in again.
         </div>
       {% endif %}
+      <div class="text-center mt-3">
+        <a href="{{ url_for('login_google') }}" class="btn btn-outline-dark w-100">
+          <i class="bi bi-google me-2"></i> Sign in with Google
+        </a>
+      </div>
 
       <p class="mt-3 text-center">
         Don’t have an account? <a href="{{ url_for('register') }}" class="text-decoration-none">Register</a>
       </p>
+
       <p class="mt-1 text-center">
         Staff? <a href="{{ url_for('stafflogin') }}" class="text-decoration-none">Staff Login</a>
       </p>
