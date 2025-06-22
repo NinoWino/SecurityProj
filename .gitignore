@@ -1,2 +1,5 @@
 .env
+<<<<<<< HEAD
 *.env
+=======
+>>>>>>> 37f5dd6 (updated mysql workbench code to add in)
