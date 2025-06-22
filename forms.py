@@ -38,3 +38,16 @@ class OTPForm(FlaskForm):
 
 class Toggle2FAForm(FlaskForm):
     submit = SubmitField()
+
+class ForgotPasswordForm(FlaskForm):
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    submit = SubmitField('Send OTP')
+
+class ResetPasswordForm(FlaskForm):
+    otp = StringField('OTP Code', validators=[DataRequired(), Length(min=6, max=6)])
+    new_password = PasswordField('New Password', validators=[DataRequired()])
+    confirm_password = PasswordField(
+        'Confirm Password',
+        validators=[DataRequired(), EqualTo('new_password', message='Passwords must match')]
+    )
+    submit = SubmitField('Reset Password')
