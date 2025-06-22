@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c88dcfab-45cc-49bc-8ad9-4740f2011f59" name="Changes" comment="updated mysql workbench code to add in" />
+    <list default="true" id="c88dcfab-45cc-49bc-8ad9-4740f2011f59" name="Changes" comment="Remove .env from tracking" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -47,19 +47,19 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;DefaultHtmlFileTemplate&quot;: &quot;HTML File&quot;,
-    &quot;Python.app.executor&quot;: &quot;Run&quot;,
-    &quot;Python.forms.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;reg+login&quot;,
-    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/mnh01/Security Project/SecurityProject&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "DefaultHtmlFileTemplate": "HTML File",
+    "Python.app.executor": "Run",
+    "Python.forms.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "5ab2ad80",
+    "ignore.virus.scanning.warn.message": "true",
+    "last_opened_file_path": "C:/Users/mnh01/Security Project/SecurityProject"
   }
-}</component>
+}]]></component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -204,7 +204,39 @@
       <option name="project" value="LOCAL" />
       <updated>1750419043484</updated>
     </task>
-    <option name="localTasksCounter" value="17" />
+    <task id="LOCAL-00017" summary="updated mysql workbench code to add in">
+      <option name="closed" value="true" />
+      <created>1750593283221</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1750593283221</updated>
+    </task>
+    <task id="LOCAL-00018" summary="added oauth password recovery">
+      <option name="closed" value="true" />
+      <created>1750595336454</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1750595336454</updated>
+    </task>
+    <task id="LOCAL-00019" summary="added oauth password recovery">
+      <option name="closed" value="true" />
+      <created>1750595722141</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1750595722141</updated>
+    </task>
+    <task id="LOCAL-00020" summary="added oauth password recovery">
+      <option name="closed" value="true" />
+      <created>1750596564981</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1750596564981</updated>
+    </task>
+    <option name="localTasksCounter" value="21" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
@@ -212,6 +244,7 @@
     <MESSAGE value="added 2fa captcha session management account locking and password reset" />
     <MESSAGE value="requirements.txt updated" />
     <MESSAGE value="updated mysql workbench code to add in" />
-    <option name="LAST_COMMIT_MESSAGE" value="updated mysql workbench code to add in" />
+    <MESSAGE value="added oauth password recovery" />
+    <option name="LAST_COMMIT_MESSAGE" value="added oauth password recovery" />
   </component>
 </project>

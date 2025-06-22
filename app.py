@@ -6,35 +6,39 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
+from authlib.integrations.flask_client import OAuth
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 app = Flask(__name__)
 # … your existing config …
 app.config.update({
-  # example using Gmail SMTP; adapt to your provider
-  'MAIL_SERVER':   'smtp.gmail.com',
-  'MAIL_PORT':     587,
-  'MAIL_USE_TLS':  True,
-  'MAIL_USERNAME': 'usertestuser919@gmail.com',
-  'MAIL_PASSWORD': 'lyqv gadp uqqo jymb',
-  'MAIL_DEFAULT_SENDER': 'No Reply <testusertest919+no-reply@gmail.com>'
+    'MAIL_SERVER':   'smtp.gmail.com',
+    'MAIL_PORT':     587,
+    'MAIL_USE_TLS':  True,
+    'MAIL_USERNAME': os.getenv('MAIL_USERNAME'),
+    'MAIL_PASSWORD': os.getenv('MAIL_PASSWORD'),
+    'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
 })
 
 mail = Mail(app)
 # Config
-app.config['SQLALCHEMY_DATABASE_URI'] = (
-    'mysql+mysqlconnector://securityprojuser:Mysql123'
-    '@127.0.0.1:3306/securityproject'
-)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'super-secret'
-app.config['RECAPTCHA_PUBLIC_KEY'] = '6LfGqGMrAAAAAIKvHI9aL0ZD-8xbP2LhPRSZPp3n'
-app.config['RECAPTCHA_PRIVATE_KEY'] = '6LfGqGMrAAAAAOwHdibEUSMjteGZjVlBo72hjJx9'
+app.config['RECAPTCHA_PUBLIC_KEY'] = os.getenv('RECAPTCHA_PUBLIC_KEY')
+app.config['RECAPTCHA_PRIVATE_KEY'] = os.getenv('RECAPTCHA_PRIVATE_KEY')
 app.config['WTF_CSRF_ENABLED'] = True
 
+app.config['GOOGLE_CLIENT_ID'] = os.getenv('GOOGLE_CLIENT_ID')
+app.config['GOOGLE_CLIENT_SECRET'] = os.getenv('GOOGLE_CLIENT_SECRET')
+app.config['GOOGLE_DISCOVERY_URL'] = "https://accounts.google.com/.well-known/openid-configuration"
+
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 # -- Step 1: Create the database if not already present
 # CREATE DATABASE IF NOT EXISTS securityproject;
 # USE securityproject;
@@ -84,7 +88,7 @@ app.config['WTF_CSRF_ENABLED'] = True
 #   1  -- user role
 # );
 
-print (generate_password_hash('test123'))
+# print (generate_password_hash('test123'))
 # Session timeout settings
 app.permanent_session_lifetime = timedelta(seconds=30)
 
@@ -95,6 +99,18 @@ app.config.update({
 })
 
 db.init_app(app)
+
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=app.config['GOOGLE_CLIENT_ID'],
+    client_secret=app.config['GOOGLE_CLIENT_SECRET'],
+    server_metadata_url=app.config['GOOGLE_DISCOVERY_URL'],
+    client_kwargs={
+        'scope': 'openid email profile'
+    }
+)
+
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -212,6 +228,37 @@ def login():
                            error=error,
                            message=request.args.get('message'))\
 
+@app.route('/login/google')
+def login_google():
+    redirect_uri = url_for('auth_callback', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route('/auth/callback')
+def auth_callback():
+    token = google.authorize_access_token()
+    user_info = token.get('userinfo') or google.parse_id_token(token)
+    if not user_info:
+        return "Authentication failed", 400
+
+    email = user_info['email']
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        # Auto-register user with default role
+        user = User(
+            username=user_info.get('name', email.split('@')[0]),
+            email=email,
+            password=generate_password_hash(os.urandom(8).hex()),  # random unusable password
+            role_id=1  # assume default 'user' role
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    session['last_active'] = datetime.utcnow().isoformat()
+    return redirect(url_for('profile'))
+
+
 @app.route('/logout')
 @login_required
 def logout():
@@ -313,6 +360,61 @@ def resend_code():
 
     # redirect back with a flag
     return redirect(url_for('two_factor', resent=1))
+
+@app.route('/forgot_password', methods=['GET', 'POST'])
+def forgot_password():
+    if current_user.is_authenticated:
+        return redirect(url_for('profile'))
+
+    form = ForgotPasswordForm()
+    error = None
+
+    if form.validate_on_submit():
+        user = User.query.filter_by(email=form.email.data).first()
+        if user:
+            code = f"{random.randint(0, 999999):06d}"
+            user.otp_code = code
+            user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+            db.session.commit()
+
+            msg = Message(
+                subject="Reset Password Code",
+                recipients=[user.email],
+                body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
+            )
+            mail.send(msg)
+            session['reset_user_id'] = user.id
+            return redirect(url_for('verify_reset_otp'))
+        else:
+            error = "Email not found."
+
+    return render_template('forgot_password.html', form=form, error=error)
+
+@app.route('/verify_reset_otp', methods=['GET', 'POST'])
+def verify_reset_otp():
+    if 'reset_user_id' not in session:
+        return redirect(url_for('forgot_password'))
+
+    user = User.query.get(session['reset_user_id'])
+    form = ResetPasswordForm()
+    error = None
+
+    if form.validate_on_submit():
+        if datetime.utcnow() > user.otp_expiry:
+            error = "OTP expired."
+        elif form.otp.data != user.otp_code:
+            error = "Invalid OTP."
+        elif check_password_hash(user.password, form.new_password.data):
+            error = "New password must be different from the current password."
+        else:
+            user.password = generate_password_hash(form.new_password.data)
+            user.otp_code = None
+            user.otp_expiry = None
+            db.session.commit()
+            session.pop('reset_user_id', None)
+            return redirect(url_for('login', message='pw_changed'))
+
+    return render_template('reset_password.html', form=form, error=error)
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
