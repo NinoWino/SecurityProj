@@ -13,18 +13,51 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
 db.init_app(app)
 
-# CREATE TABLE user (
-#     id INT PRIMARY KEY AUTO_INCREMENT,
-#     username VARCHAR(50) NOT NULL UNIQUE,
-#     email VARCHAR(100) NOT NULL UNIQUE,
-#     password VARCHAR(255) NOT NULL,
-#     is_staff BOOLEAN DEFAULT FALSE
+# -- Step 1: Create the database if not already present
+# CREATE DATABASE IF NOT EXISTS securityproject;
+# USE securityproject;
+#
+# -- Step 3: Create roles table
+# CREATE TABLE `roles` (
+#   id   INT AUTO_INCREMENT PRIMARY KEY,
+#   name VARCHAR(20) UNIQUE NOT NULL
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+#
+# -- Step 4: Insert default roles
+# INSERT INTO `roles` (name) VALUES
+#   ('user'),
+#   ('staff'),
+#   ('admin');
+#
+# -- Step 5: Create user table and link role_id to roles table
+# CREATE TABLE `user` (
+#   id                 INT AUTO_INCREMENT PRIMARY KEY,
+#   username           VARCHAR(50)  NOT NULL UNIQUE,
+#   email              VARCHAR(100) NOT NULL UNIQUE,
+#   password           VARCHAR(255) NOT NULL,
+#
+#   role_id            INT NOT NULL DEFAULT 1,
+#   FOREIGN KEY (role_id) REFERENCES `roles`(id),
+#
+#   failed_attempts    INT          NOT NULL DEFAULT 0,
+#   last_failed_login  DATETIME     NULL,
+#   is_locked          BOOLEAN      NOT NULL DEFAULT FALSE,
+#   two_factor_enabled BOOLEAN      NOT NULL DEFAULT TRUE,
+#   otp_code           VARCHAR(6),
+#   otp_expiry         DATETIME
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+#
+# -- Step 6: Insert a sample user (password = 'test123', role = 'user')
+# -- Replace the hash below with your generated password hash if needed
+# INSERT INTO `user` (username, email, password, role_id)
+# VALUES (
+#   'test',
+#   'test@gmail.com',
+#   'hashed password',
+# -- print(generate_password_hash('test123'))
+#   1  -- user role
 # );
-# INSERT INTO user (username, email, password, is_staff)
-# VALUES ('test', 'test@gmail.com', 'test123', FALSE);
 
-# from werkzeug.security import generate_password_hash
-# print(generate_password_hash("test123"))
 
 login_manager = LoginManager()
 login_manager.init_app(app)
