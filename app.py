@@ -1,8 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
+from flask_wtf import CSRFProtect
+from flask_talisman import Talisman
 
 
 app = Flask(__name__)
@@ -11,7 +13,20 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://securityprojuser:Mysql123@127.0.0.1:3306/securityproject'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'super-secret'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://securityprojuser:Mysql123@127.0.0.1:3306/securityproject'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'super-secret-key-change-this'
+app.config['SESSION_COOKIE_SECURE'] = True  # Ensures cookies are sent over HTTPS only
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevents JavaScript access to cookies
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Prevent CSRF
+
 db.init_app(app)
+
+# ✅ CSRF Protection
+csrf = CSRFProtect(app)
+
+# ✅ Security Headers (HSTS, CSP, X-Frame, etc.)
+Talisman(app, content_security_policy=None)
 
 # -- Step 1: Create the database if not already present
 # CREATE DATABASE IF NOT EXISTS securityproject;
