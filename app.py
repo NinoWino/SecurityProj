@@ -113,10 +113,24 @@ def logout():
     flash('Logged out.', 'info')
     return redirect(url_for('login'))
 
-@app.route('/register')
+@app.route('/register', methods=['GET', 'POST'])
 def register():
-    return render_template('register.html')
+    if request.method == 'POST':
+        username = request.form['username']
+        email = request.form['email']
+        password = generate_password_hash(request.form['password'])
 
+        if User.query.filter_by(email=email).first():
+            flash('Email already registered.', 'danger')
+            return redirect(url_for('register'))
+
+        new_user = User(username=username, email=email, password=password)
+        db.session.add(new_user)
+        db.session.commit()
+        flash('Registered successfully.', 'success')
+        return redirect(url_for('login'))
+
+    return render_template('register.html')
 @app.route('/profile')
 @login_required
 def profile():
