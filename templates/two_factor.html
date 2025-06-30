@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container d-flex flex-column align-items-center justify-content-center mt-5">
+  <div class="col-md-4">
+    <h3 class="text-center mb-3">Verification Code</h3>
+    <p class="text-center text-muted">Enter the 6-digit code sent to your email.</p>
+    <form method="POST" id="otpForm">
+      {{ form.hidden_tag() }}
+      <input type="hidden" id="token-field" name="{{ form.token.name }}">
+      <div class="d-flex justify-content-center gap-2 my-4 verification-input-container">
+        <input type="text" name="digit1" maxlength="1" class="form-control text-center verification-input" autofocus>
+        <input type="text" name="digit2" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit3" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit4" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit5" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit6" maxlength="1" class="form-control text-center verification-input">
+      </div>
+      <button type="submit" class="btn btn-dark w-100">Verify Account</button>
+      {% if resent %}
+      <div class="alert alert-success mt-3 text-center">
+        A new code has been sent.
+      </div>
+      {% endif %}
+
+      {% if error %}
+        <div class="alert alert-danger mt-3 text-center">{{ error }}</div>
+      {% endif %}
+    </form>
+    <div class="text-center mt-3">
+      Didn’t receive code? <a href="{{ url_for('resend_code') }}">Resend</a>
+    </div>
+  </div>
+</div>
+<style>
+.verification-input {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.5rem;
+}
+.verification-input-container input::selection {
+  background: #0d6efd;
+  color: #fff;
+}
+</style>
+<script>
+(function() {
+  const inputs = document.querySelectorAll('.verification-input');
+  const container = document.querySelector('.verification-input-container');
+
+  // Auto-forward focus and handle navigation
+  inputs.forEach((input, idx) => {
+    input.addEventListener('input', () => {
+      if (input.value.length === 1 && idx < inputs.length - 1) {
+        inputs[idx + 1].focus();
+      }
+      if (input.value.length > 1) {
+        input.value = input.value.charAt(0);
+      }
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        if (!input.value && idx > 0) {
+          inputs[idx - 1].focus();
+        }
+      } else if (e.key === 'ArrowLeft' && idx > 0) {
+        inputs[idx - 1].focus();
+        e.preventDefault();
+      } else if (e.key === 'ArrowRight' && idx < inputs.length - 1) {
+        inputs[idx + 1].focus();
+        e.preventDefault();
+      }
+    });
+
+    // Paste handling
+    input.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const paste = (e.clipboardData || window.clipboardData).getData('text')
+        .replace(/\D/g, '')
+        .slice(0, inputs.length);
+      paste.split('').forEach((d, i) => {
+        inputs[i].value = d;
+      });
+      // focus next empty or last
+      const firstEmpty = Array.from(inputs).find(inp => !inp.value);
+      (firstEmpty || inputs[inputs.length - 1]).focus();
+    });
+  });
+
+  // Clicking anywhere on container focuses the first empty input
+  container.addEventListener('click', () => {
+    const firstEmpty = Array.from(inputs).find(inp => !inp.value);
+    (firstEmpty || inputs[0]).focus();
+  });
+
+  // Collect digits into hidden field on submit
+  document.getElementById('otpForm').addEventListener('submit', function(e) {
+    const token = Array.from(inputs).map(inp => inp.value).join('');
+    document.getElementById('token-field').value = token;
+  });
+})();
+</script>
+{% endblock %}

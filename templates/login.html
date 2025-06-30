@@ -3,28 +3,75 @@
 <div class="container d-flex justify-content-center mt-5">
   <div class="col-md-5">
     <h3 class="text-center mb-4">Login</h3>
-    <form method="POST" action="/login">
+    <form method="POST">
+      {{ form.hidden_tag() }}
+
       <div class="mb-3">
-        <label for="email" class="form-label">Email address</label>
-        <input type="email" class="form-control" id="email" name="email" required>
+        {{ form.email.label(class="form-label") }}
+        {{ form.email(class="form-control") }}
       </div>
-      <div class="mb-4">
-        <label for="password" class="form-label">Password</label>
-        <input type="password" class="form-control" id="password" name="password" required>
-      </div>
-      <div class="mb-4">
-      {% if error %}
-        <div class="alert alert-danger" >{{ error }}</div>
-      {% endif %}
+
+      <div class="mb-3">
+        {{ form.password.label(class="form-label") }}
+        <div class="input-group">
+          {{ form.password(class="form-control", id="loginPassword") }}
+          <span class="input-group-text" style="cursor: pointer;" id="toggleLoginPassword">
+            <i class="bi bi-eye-slash"></i>
+          </span>
         </div>
+      </div>
+      <p class="mb-3">
+        <a href="{{ url_for('forgot_password') }}" class="text-decoration-none">Forgot Password?</a>
+      </p>
+      <div class="mb-3">
+        {{ form.recaptcha }}
+        {% for error in form.recaptcha.errors %}
+          <div class="text-danger">{{ error }}</div>
+        {% endfor %}
+      </div>
+
       <button type="submit" class="btn btn-dark w-100">Login</button>
+
+      {% if error %}
+        <div class="alert alert-danger mt-3">{{ error }}</div>
+      {% endif %}
+
+      {% if message == 'logged_out' %}
+        <div class="alert alert-info mt-3">You have been logged out.</div>
+      {% elif message == 'timeout' %}
+        <div class="alert alert-warning mt-3">
+          You were logged out due to inactivity. Please log in again.
+        </div>
+      {% elif message == 'pw_changed' %}
+        <div class="alert alert-success mt-3">
+          Your password was changed. Please log in again.
+        </div>
+      {% endif %}
+      <div class="text-center mt-3">
+        <a href="{{ url_for('login_google') }}" class="btn btn-outline-dark w-100">
+          <i class="bi bi-google me-2"></i> Sign in with Google
+        </a>
+      </div>
+
       <p class="mt-3 text-center">
         Don’t have an account? <a href="{{ url_for('register') }}" class="text-decoration-none">Register</a>
       </p>
-       <p class="mt-3 text-center">
+
+      <p class="mt-1 text-center">
         Staff? <a href="{{ url_for('stafflogin') }}" class="text-decoration-none">Staff Login</a>
       </p>
     </form>
   </div>
 </div>
+
+<script>
+  document.getElementById('toggleLoginPassword').addEventListener('click', function() {
+    const pwd = document.getElementById('loginPassword');
+    const isHidden = pwd.type === 'password';
+    pwd.type = isHidden ? 'text' : 'password';
+    const icon = this.querySelector('i');
+    icon.classList.toggle('bi-eye');
+    icon.classList.toggle('bi-eye-slash');
+  });
+</script>
 {% endblock %}

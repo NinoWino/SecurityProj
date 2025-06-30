@@ -1,0 +1,19 @@
+Index: templates/home.html
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>{% extends 'base.html' %}\r\n\r\n{% block content %}\r\n<!-- Hero Section -->\r\n<section class=\"hero-section\">\r\n    <div class=\"container\">\r\n        <div class=\"row justify-content-center text-center\">\r\n            <div class=\"col-lg-8\">\r\n                <h1 class=\"hero-title\">Discover Amazing Collectibles at Collective</h1>\r\n                <p class=\"hero-subtitle\">Shop the latest trends, carefully selected for you </p>\r\n                <a href=\"#products\" class=\"btn-primary-minimal\">Shop Collection</a>\r\n            </div>\r\n        </div>\r\n    </div>\r\n</section>\r\n\r\n<!-- Features Section -->\r\n<section class=\"py-5 border-bottom\">\r\n    <div class=\"container\">\r\n        <div class=\"row\">\r\n            <div class=\"col-md-4 text-center mb-4\">\r\n                <div class=\"feature-icon mx-auto\">\r\n                    <i class=\"bi bi-truck text-primary fs-3\"></i>\r\n                </div>\r\n                <h5>Free Shipping</h5>\r\n                <p class=\"text-muted\">On orders over $100</p>\r\n            </div>\r\n            <div class=\"col-md-4 text-center mb-4\">\r\n                <div class=\"feature-icon mx-auto\">\r\n                    <i class=\"bi bi-shield-check text-primary fs-3\"></i>\r\n                </div>\r\n                <h5>Secure Payment</h5>\r\n                <p class=\"text-muted\">100% secure transactions</p>\r\n            </div>\r\n            <div class=\"col-md-4 text-center mb-4\">\r\n                <div class=\"feature-icon mx-auto\">\r\n                    <i class=\"bi bi-arrow-repeat text-primary fs-3\"></i>\r\n                </div>\r\n                <h5>Easy Returns</h5>\r\n                <p class=\"text-muted\">30-day return policy</p>\r\n            </div>\r\n        </div>\r\n    </div>\r\n</section>\r\n\r\n<!-- Footer -->\r\n<footer class=\"footer\" id=\"contact\">\r\n    <div class=\"container\">\r\n        <div class=\"footer-content\">\r\n            <div class=\"footer-links\">\r\n                <a href=\"#\">About</a>\r\n                <a href=\"#\">Contact</a>\r\n                <a href=\"#\">Shipping</a>\r\n                <a href=\"#\">Returns</a>\r\n            </div>\r\n            <p>&copy; 2024 Collective. All rights reserved.</p>\r\n        </div>\r\n    </div>\r\n</footer>\r\n\r\n\r\n{% endblock %}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/templates/home.html b/templates/home.html
+--- a/templates/home.html	(revision 4c29253568545132fb0fd840751f13116f458120)
++++ b/templates/home.html	(date 1750151851520)
+@@ -53,7 +53,7 @@
+                 <a href="#">Shipping</a>
+                 <a href="#">Returns</a>
+             </div>
+-            <p>&copy; 2024 Collective. All rights reserved.</p>
++            <p>&copy; 2025 Collective. All rights reserved.</p>
+         </div>
+     </div>
+ </footer>
