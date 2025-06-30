@@ -73,7 +73,7 @@ Talisman(app, content_security_policy=None)
 #   1  -- user role
 # );
 
-
+print(generate_password_hash('test123'))
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
