@@ -1,5 +1,6 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import select
 from flask_login import (
     LoginManager, login_user, logout_user,
     login_required, current_user
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
 from authlib.integrations.flask_client import OAuth
+from authlib.integrations.base_client.errors import OAuthError
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -131,7 +133,7 @@ login_manager.login_view = 'login'
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 @login_manager.unauthorized_handler
 def on_unauthorized():
@@ -171,7 +173,8 @@ def login():
     MAX_ATTEMPTS  = 3
 
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
+        stmt = select(User).filter_by(email=form.email.data)
+        user = db.session.scalars(stmt).first()
 
         if user:
             # Account lockout
@@ -235,27 +238,39 @@ def login_google():
 
 @app.route('/auth/callback')
 def auth_callback():
-    token = google.authorize_access_token()
+    try:
+        token = google.authorize_access_token()
+    except OAuthError:
+        flash('Google login was cancelled or failed.', 'danger')
+        return redirect(url_for('login'))
+
     user_info = token.get('userinfo') or google.parse_id_token(token)
     if not user_info:
-        return "Authentication failed", 400
+        flash("Authentication failed. No user info returned.", "danger")
+        return redirect(url_for('login'))
 
-    email = user_info['email']
-    user = User.query.filter_by(email=email).first()
+    email = user_info.get('email')
+    if not email:
+        flash("Email not available from Google account.", "danger")
+        return redirect(url_for('login'))
+
+    stmt = select(User).filter_by(email=email)
+    user = db.session.scalars(stmt).first()
 
     if not user:
-        # Auto-register user with default role
+        # Auto-register the user with default 'user' role
         user = User(
-            username=user_info.get('name', email.split('@')[0]),
+            username=user_info.get('name') or email.split('@')[0],
             email=email,
-            password=generate_password_hash(os.urandom(8).hex()),  # random unusable password
-            role_id=1  # assume default 'user' role
+            password=generate_password_hash(os.urandom(16).hex()),  # Random unusable password
+            role_id=1  # Default to 'user' role
         )
         db.session.add(user)
         db.session.commit()
 
     login_user(user)
     session['last_active'] = datetime.utcnow().isoformat()
+
     return redirect(url_for('profile'))
 
 
@@ -306,7 +321,7 @@ def two_factor():
     if not user_id:
         return redirect(url_for('login'))
 
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     form = OTPForm()
     error = None
 
@@ -338,7 +353,7 @@ def resend_code():
     if not user_id:
         return redirect(url_for('login'))
 
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
 
     # generate & store new code
     code = f"{random.randint(0, 999999):06d}"
@@ -370,7 +385,8 @@ def forgot_password():
     error = None
 
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
+        stmt = select(User).filter_by(email=form.email.data)
+        user = db.session.scalars(stmt).first()
         if user:
             code = f"{random.randint(0, 999999):06d}"
             user.otp_code = code
@@ -395,7 +411,7 @@ def verify_reset_otp():
     if 'reset_user_id' not in session:
         return redirect(url_for('forgot_password'))
 
-    user = User.query.get(session['reset_user_id'])
+    user = db.session.get(User, session['reset_user_id'])
     form = ResetPasswordForm()
     error = None
 
