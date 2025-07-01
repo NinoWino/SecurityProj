@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+<style>
+  .collapsible-box {
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 10px 15px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: bold;
+    margin-top: 20px;
+    background-color: #f9f9f9;
+  }
+
+  .arrow {
+    transition: transform 0.3s ease;
+    display: inline-block;
+  }
+
+  .arrow.rotate {
+    transform: rotate(90deg);
+  }
+
+  .collapse-content {
+    display: none;
+    padding: 10px 0;
+    transition: max-height 0.3s ease;
+  }
+
+  .same-size-btn {
+    width: 200px;
+    padding: 10px;
+    font-size: 16px;
+    margin: 5px;
+    border: none;
+    background-color: #444;
+    color: white;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.3s ease;
+  }
+
+  .same-size-btn:hover {
+    background-color: #666;
+  }
+</style>
+
+<div class="product-detail-container">
+  <div class="product-detail-left">
+    <img src="{{ url_for('static', filename='images/' ~ product.image) }}" alt="{{ product.name }}">
+  </div>
+
+  <div class="product-detail-right">
+    <h1>{{ product.name }}</h1>
+    <p class="price">{{ product.price }}</p>
+
+    <!-- Clickable collapsible box -->
+    <div class="collapsible-box" onclick="toggleDescription()">
+      <span>Product Description</span>
+      <span id="arrow" class="arrow">&#9654;</span>
+    </div>
+
+    <div id="Description" class="collapse-content">
+      <p>{{ product.description }}</p>
+    </div>
+
+    <div class="action-buttons">
+      <button class="add-to-cart same-size-btn">Add to Cart</button>
+      <button class="checkout same-size-btn">Checkout Immediately</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  function toggleDescription() {
+    const content = document.getElementById("Description");
+    const arrow = document.getElementById("arrow");
+
+    const isVisible = content.style.display === "block";
+    content.style.display = isVisible ? "none" : "block";
+
+    if (isVisible) {
+      arrow.classList.remove("rotate");
+    } else {
+      arrow.classList.add("rotate");
+    }
+  }
+</script>
+{% endblock %}

@@ -26,3 +26,11 @@ class Role(db.Model):
     name = db.Column(db.String(20), unique=True, nullable=False)
 
     users = db.relationship('User', back_populates='role')
+
+    @property
+    def decrypted_email(self):
+        return fernet.decrypt(self.email.encode()).decode()
+
+    @decrypted_email.setter
+    def decrypted_email(self, value):
+        self.email = fernet.encrypt(value.encode()).decode()
