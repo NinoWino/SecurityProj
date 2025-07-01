@@ -88,7 +88,6 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 #   1  -- user role
 # );
 
-# print (generate_password_hash('test123'))
 # Session timeout settings
 app.permanent_session_lifetime = timedelta(seconds=30)
 
