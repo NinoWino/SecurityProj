@@ -6,7 +6,7 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -42,7 +42,7 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 
 print (generate_password_hash('test123'))
 # Session timeout settings
-app.permanent_session_lifetime = timedelta(minutes=30)
+app.permanent_session_lifetime = timedelta(seconds=30)
 
 # Secure cookies
 app.config.update({
@@ -540,8 +540,9 @@ def delete_account():
 
     if form.validate_on_submit():
         try:
+            user = db.session.get(User, current_user.id)  # Safely retrieve mapped instance
             logout_user()
-            db.session.delete(current_user)
+            db.session.delete(user)
             db.session.commit()
             session.clear()
             flash('Account deleted successfully.', 'success')
