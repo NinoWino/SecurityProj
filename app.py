@@ -1,3 +1,4 @@
+
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
@@ -7,7 +8,7 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -41,56 +42,8 @@ app.config['GOOGLE_CLIENT_SECRET'] = os.getenv('GOOGLE_CLIENT_SECRET')
 app.config['GOOGLE_DISCOVERY_URL'] = "https://accounts.google.com/.well-known/openid-configuration"
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-# -- Step 1: Create the database if not already present
-# CREATE DATABASE IF NOT EXISTS securityproject;
-# USE securityproject;
-#
-# -- Step 2: Drop tables if they exist (in correct dependency order)
-# DROP TABLE IF EXISTS `user`;
-# DROP TABLE IF EXISTS `roles`;
-#
-# -- Step 3: Create roles table
-# CREATE TABLE `roles` (
-#   id   INT AUTO_INCREMENT PRIMARY KEY,
-#   name VARCHAR(20) UNIQUE NOT NULL
-# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-#
-# -- Step 4: Insert default roles
-# INSERT INTO `roles` (name) VALUES
-#   ('user'),
-#   ('staff'),
-#   ('admin');
-#
-# -- Step 5: Create user table and link role_id to roles table
-# CREATE TABLE `user` (
-#   id                 INT AUTO_INCREMENT PRIMARY KEY,
-#   username           VARCHAR(50)  NOT NULL UNIQUE,
-#   email              VARCHAR(100) NOT NULL UNIQUE,
-#   password           VARCHAR(255) NOT NULL,
-#
-#   role_id            INT NOT NULL DEFAULT 1,
-#   FOREIGN KEY (role_id) REFERENCES `roles`(id),
-#
-#   failed_attempts    INT          NOT NULL DEFAULT 0,
-#   last_failed_login  DATETIME     NULL,
-#   is_locked          BOOLEAN      NOT NULL DEFAULT FALSE,
-#   two_factor_enabled BOOLEAN      NOT NULL DEFAULT TRUE,
-#   otp_code           VARCHAR(6),
-#   otp_expiry         DATETIME
-# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-#
-# -- Step 6: Insert a sample user (password = 'test123', role = 'user')
-# -- Replace the hash below with your generated password hash if needed
-# INSERT INTO `user` (username, email, password, role_id)
-# VALUES (
-#   'test',
-#   'test@gmail.com',
-#   'hashed password',
-# -- print(generate_password_hash('test123'))
-#   1  -- user role
-# );
 
-# print (generate_password_hash('test123'))
+print (generate_password_hash('test123'))
 # Session timeout settings
 app.permanent_session_lifetime = timedelta(seconds=30)
 
@@ -120,7 +73,6 @@ def add_no_cache_headers(response):
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     return response
-
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -439,9 +391,102 @@ def verify_reset_otp():
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-@app.route('/register')
-def register():
-    return render_template('register.html')
+# @app.route('/register', methods=['GET', 'POST'])
+# def register():
+#     if current_user.is_authenticated:
+#         return redirect(url_for('profile'))
+#
+#     from forms import RegisterForm
+#     form = RegisterForm()
+#     error = None
+#
+#     if form.validate_on_submit():
+#         try:
+#             hashed_pw = generate_password_hash(form.password.data)
+#             new_user = User(
+#                 username=form.username.data.strip(),
+#                 email=form.email.data.strip(),
+#                 password=hashed_pw,
+#                 role_id=1
+#             )
+#             db.session.add(new_user)
+#             db.session.commit()
+#             return redirect(url_for('login', message='registered'))
+#         except Exception as e:
+#             db.session.rollback()
+#             error = "Registration failed. Please try again."
+#
+#     return render_template('register.html', form=form, error=error)
+
+@app.route('/register/email', methods=['GET', 'POST'])
+def register_email():
+    from forms import EmailForm
+    form = EmailForm()
+
+    if form.validate_on_submit():
+        email = form.email.data.strip()
+
+        # Check if email is already registered
+        from models import User
+        if User.query.filter_by(email=email).first():
+            flash('Email is already registered. Please log in.', 'danger')
+            return redirect(url_for('login'))
+
+        # TODO: Generate OTP here in future
+        # otp = generate_otp()
+
+        # Store email (and OTP later) in session temporarily
+        session['register_email'] = email
+        # session['register_otp'] = otp
+
+        flash('Proceed to complete your registration.', 'info')
+        return redirect(url_for('register_details'))
+
+    return render_template('register_email.html', form=form)
+
+@app.route('/register/details', methods=['GET', 'POST'])
+def register_details():
+    from forms import RegisterDetailsForm
+    form = RegisterDetailsForm()
+
+    email = session.get('register_email')
+    if not email:
+        flash('Session expired or invalid access. Please restart registration.', 'danger')
+        return redirect(url_for('register_email'))
+
+    if form.validate_on_submit():
+        otp_input = form.otp.data.strip()
+
+        # TODO: Verify OTP here in future
+        # if otp_input != session.get('register_otp'):
+        #     flash('Invalid OTP.', 'danger')
+        #     return render_template('register_details.html', form=form, email=email)
+
+        # Check if username already exists
+        from models import User
+        if User.query.filter_by(username=form.username.data.strip()).first():
+            form.username.errors.append('Username already taken.')
+            return render_template('register_details.html', form=form, email=email)
+
+        hashed_pw = generate_password_hash(form.password.data)
+        new_user = User(
+            username=form.username.data.strip(),
+            email=email,
+            password=hashed_pw,
+            role_id=1
+        )
+        db.session.add(new_user)
+        db.session.commit()
+
+        # Clear session data
+        session.pop('register_email', None)
+        # session.pop('register_otp', None)
+
+        flash('Registration successful. Please log in.', 'success')
+        return redirect(url_for('login'))
+
+    return render_template('register_details.html', form=form, email=email)
+
 
 @app.route('/profile')
 @login_required
@@ -463,7 +508,69 @@ def stafflogin():
 def contact():
     return render_template('contact.html')
 
+@app.route('/change_username', methods=['GET', 'POST'])
+@login_required
+def change_username():
+    from forms import ChangeUsernameForm
+    form = ChangeUsernameForm()
+    error = None
+
+    if form.validate_on_submit():
+        try:
+            current_user.username = form.new_username.data.strip()
+            db.session.commit()
+            flash('Username changed successfully.', 'success')
+            return redirect(url_for('profile'))
+        except Exception:
+            db.session.rollback()
+            error = 'Failed to update username. Please try again.'
+            flash(error, 'danger')
+
+    return render_template('change_username.html', form=form, error=error)
+
+@app.route('/change_email', methods=['GET', 'POST'])
+@login_required
+def change_email():
+    from forms import ChangeEmailForm
+    form = ChangeEmailForm()
+    error = None
+
+    if form.validate_on_submit():
+        try:
+            current_user.email = form.new_email.data.strip()
+            db.session.commit()
+            flash('Email changed successfully.', 'success')
+            return redirect(url_for('profile'))
+        except Exception:
+            db.session.rollback()
+            error = 'Failed to update email. Please try again.'
+            flash(error, 'danger')
+
+    return render_template('change_email.html', form=form, error=error)
+
+@app.route('/delete_account', methods=['GET', 'POST'])
+@login_required
+def delete_account():
+    from forms import DeleteAccountForm
+    form = DeleteAccountForm()
+
+    if form.validate_on_submit():
+        try:
+            user = db.session.get(User, current_user.id)  # Safely retrieve mapped instance
+            logout_user()
+            db.session.delete(user)
+            db.session.commit()
+            session.clear()
+            flash('Account deleted successfully.', 'success')
+            return redirect(url_for('home'))
+        except Exception:
+            db.session.rollback()
+            flash('Failed to delete account. Please try again.', 'danger')
+
+    return render_template('delete_account.html', form=form)
+
 if __name__ == '__main__':
     app.run(debug=True)
+
 
 

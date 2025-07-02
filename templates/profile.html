@@ -23,6 +23,17 @@
       <a href="{{ url_for('change_password') }}" class="btn btn-secondary">
         Change Password
       </a>
+            <a href="{{ url_for('delete_account') }}" class="btn btn-secondary">
+        Delete Account
+      </a>
+
+            <a href="{{ url_for('change_email') }}" class="btn btn-secondary">
+        Change Email
+      </a>
+            <a href="{{ url_for('change_username') }}" class="btn btn-secondary">
+        Change Username
+      </a>
+
 
       <form method="POST" action="{{ url_for('toggle_2fa') }}" class="d-inline">
         {{ toggle_form.hidden_tag() }}

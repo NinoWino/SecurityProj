@@ -1,93 +1,142 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Collective - Minimalistic Store{% endblock %}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/navbar.css') }}">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Collective - Minimalistic Store{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/navbar.css') }}" />
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-white">
-        <div class="container">
-            <a class="navbar-brand" href="{{ url_for('home') }}">Collective</a>
-            <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('product') }}">Products</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('contact') }}">Contact</a>
-                    </li>
-                </ul>
-                <div class="search-container me-3" style="max-width: 300px;">
-                    <input class="form-control search-input" type="search" placeholder="Search..." aria-label="Search">
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                  {% if current_user.is_authenticated %}
-                    <a href="{{ url_for('profile') }}" class="btn btn-minimal">
-                      <i class="bi bi-person"></i>
-                    </a>
-                  {% else %}
-                    <a href="{{ url_for('login') }}" class="btn btn-minimal">
-                      <i class="bi bi-person"></i>
-                    </a>
-                  {% endif %}
-                  <button class="btn btn-minimal position-relative" data-bs-toggle="offcanvas" data-bs-target="#cartOffcanvas">
-                      <i class="bi bi-bag"></i>
-                      <span class="cart-badge" id="cartCount">0</span>
-                  </button>
-                </div>
-            </div>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-light bg-white">
+    <div class="container">
+      <a class="navbar-brand" href="{{ url_for('home') }}">Collective</a>
+      <button
+        class="navbar-toggler border-0"
+        type="button"
+        data-bs-toggle="collapse"
+        data-bs-target="#navbarNav"
+      >
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('product') }}">Products</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('contact') }}">Contact</a>
+          </li>
+        </ul>
+        <div class="search-container me-3" style="max-width: 300px;">
+          <input
+            class="form-control search-input"
+            type="search"
+            placeholder="Search..."
+            aria-label="Search"
+          />
         </div>
-    </nav>
-    <!-- Cart Offcanvas -->
-    <div class="offcanvas offcanvas-end" tabindex="-1" id="cartOffcanvas" aria-labelledby="cartOffcanvasLabel">
-        <div class="offcanvas-header">
-            <h5 class="offcanvas-title" id="cartOffcanvasLabel">Cart</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        <div class="d-flex align-items-center gap-2">
+          {% if current_user.is_authenticated %}
+          <a href="{{ url_for('profile') }}" class="btn btn-minimal">
+            <i class="bi bi-person"></i>
+          </a>
+          {% else %}
+          <a href="{{ url_for('login') }}" class="btn btn-minimal">
+            <i class="bi bi-person"></i>
+          </a>
+          {% endif %}
+          <button
+            class="btn btn-minimal position-relative"
+            data-bs-toggle="offcanvas"
+            data-bs-target="#cartOffcanvas"
+          >
+            <i class="bi bi-bag"></i>
+            <span class="cart-badge" id="cartCount">0</span>
+          </button>
         </div>
-        <div class="offcanvas-body d-flex flex-column">
-            <div id="cartItems" class="flex-grow-1">
-                <p class="text-muted text-center">Your cart is empty</p>
-            </div>
-            <div class="cart-total mt-auto">
-                <div class="d-flex justify-content-between mb-3">
-                    <span>Total</span>
-                    <strong id="cartTotal">$0</strong>
-                </div>
-                <button class="btn-primary-minimal w-100">Checkout</button>
-            </div>
-        </div>
+      </div>
     </div>
-    <!-- Main Content -->
-    {% block content %}{% endblock %}
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
-     {% if current_user.is_authenticated %}
-        <script>
-          (function() {
-            // 30-second timeout for demo (use 1800 for 30min)
-            const idleSeconds = 30;
-            let idleTimer;
-            const resetTimer = () => {
-              clearTimeout(idleTimer);
-              idleTimer = setTimeout(() => {
-                window.location = "{{ url_for('login', message='timeout') }}";
-              }, idleSeconds * 1000);
-            };
-            ['click','mousemove','keydown','scroll','touchstart']
-              .forEach(evt => document.addEventListener(evt, resetTimer));
-            resetTimer();
-          })();
-        </script>
-    {% endif %}
+  </nav>
 
+  <!-- Flash messages -->
+  <div class="container mt-3">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    <div
+      class="alert alert-{{ category }} alert-dismissible fade show"
+      role="alert"
+    >
+      {{ message }}
+      <button
+        type="button"
+        class="btn-close"
+        data-bs-dismiss="alert"
+        aria-label="Close"
+      ></button>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+  </div>
+
+  <!-- Cart Offcanvas -->
+  <div
+    class="offcanvas offcanvas-end"
+    tabindex="-1"
+    id="cartOffcanvas"
+    aria-labelledby="cartOffcanvasLabel"
+  >
+    <div class="offcanvas-header">
+      <h5 class="offcanvas-title" id="cartOffcanvasLabel">Cart</h5>
+      <button
+        type="button"
+        class="btn-close"
+        data-bs-dismiss="offcanvas"
+        aria-label="Close"
+      ></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column">
+      <div id="cartItems" class="flex-grow-1">
+        <p class="text-muted text-center">Your cart is empty</p>
+      </div>
+      <div class="cart-total mt-auto">
+        <div class="d-flex justify-content-between mb-3">
+          <span>Total</span>
+          <strong id="cartTotal">$0</strong>
+        </div>
+        <button class="btn-primary-minimal w-100">Checkout</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  {% block content %}{% endblock %}
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+  {% if current_user.is_authenticated %}
+  <script>
+    (function () {
+      // 30-minute timeout for inactivity
+      const idleSeconds = 30;
+      let idleTimer;
+      const resetTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          window.location = "{{ url_for('login', message='timeout') }}";
+        }, idleSeconds * 1000);
+      };
+      ["click", "mousemove", "keydown", "scroll", "touchstart"].forEach((evt) =>
+        document.addEventListener(evt, resetTimer)
+      );
+      resetTimer();
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>

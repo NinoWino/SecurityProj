@@ -4,9 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c88dcfab-45cc-49bc-8ad9-4740f2011f59" name="Changes" comment="Remove .env from tracking">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-    </list>
+    <list default="true" id="c88dcfab-45cc-49bc-8ad9-4740f2011f59" name="Changes" comment="." />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -23,7 +21,7 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="renfred+enzac" />
+        <entry key="$PROJECT_DIR$" value="reg+login" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -37,7 +35,7 @@
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/NinoWino/SecurityProj.git&quot;,
-    &quot;accountId&quot;: &quot;740a5169-ca02-4f11-85c0-2a3349b2b43e&quot;
+    &quot;accountId&quot;: &quot;aff90296-f601-40ed-a384-63d02e886d90&quot;
   }
 }</component>
   <component name="ProjectColorInfo">{
@@ -49,23 +47,23 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;DefaultHtmlFileTemplate&quot;: &quot;HTML File&quot;,
-    &quot;Python.app.executor&quot;: &quot;Run&quot;,
-    &quot;Python.forms.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;reg+login&quot;,
-    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/mnh01/Security Project/SecurityProject&quot;
+
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "DefaultHtmlFileTemplate": "HTML File",
+    "Python.app.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "reg+login",
+    "ignore.virus.scanning.warn.message": "true",
+    "last_opened_file_path": "C:/Users/mnh01/Security Project/SecurityProject"
   }
 }</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-53e2683a6804-9cdd278e9d02-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-251.26094.141" />
+        <option value="bundled-python-sdk-495700d161d3-aa17d162503b-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-243.22562.220" />
       </set>
     </attachedChunks>
   </component>
@@ -249,13 +247,30 @@
     <option name="localTasksCounter" value="22" />
     <servers />
   </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="origin/reg+login" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="added 2fa captcha session management account locking and password reset" />
-    <MESSAGE value="requirements.txt updated" />
-    <MESSAGE value="updated mysql workbench code to add in" />
-    <MESSAGE value="added oauth password recovery" />
     <MESSAGE value="." />
-    <MESSAGE value="Remove .env from tracking" />
-    <option name="LAST_COMMIT_MESSAGE" value="Remove .env from tracking" />
   </component>
 </project>
