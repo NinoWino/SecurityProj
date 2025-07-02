@@ -71,7 +71,6 @@ def add_no_cache_headers(response):
     response.headers['Expires'] = '0'
     return response
 
-
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
