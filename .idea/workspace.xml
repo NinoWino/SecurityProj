@@ -47,6 +47,7 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
+
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "DefaultHtmlFileTemplate": "HTML File",
@@ -58,7 +59,7 @@
     "ignore.virus.scanning.warn.message": "true",
     "last_opened_file_path": "C:/Users/mnh01/Security Project/SecurityProject"
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -131,7 +132,119 @@
       <option name="project" value="LOCAL" />
       <updated>1749992785545</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary=".">
+      <option name="closed" value="true" />
+      <created>1750147850754</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1750147850754</updated>
+    </task>
+    <task id="LOCAL-00009" summary=".">
+      <option name="closed" value="true" />
+      <created>1750147863744</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1750147863744</updated>
+    </task>
+    <task id="LOCAL-00010" summary=".">
+      <option name="closed" value="true" />
+      <created>1750147875095</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1750147875095</updated>
+    </task>
+    <task id="LOCAL-00011" summary=".">
+      <option name="closed" value="true" />
+      <created>1750232414045</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1750232414045</updated>
+    </task>
+    <task id="LOCAL-00012" summary=".">
+      <option name="closed" value="true" />
+      <created>1750326028143</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1750326028143</updated>
+    </task>
+    <task id="LOCAL-00013" summary=".">
+      <option name="closed" value="true" />
+      <created>1750326048317</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1750326048317</updated>
+    </task>
+    <task id="LOCAL-00014" summary="added 2fa captcha session management account locking and password reset">
+      <option name="closed" value="true" />
+      <created>1750417676718</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1750417676718</updated>
+    </task>
+    <task id="LOCAL-00015" summary="requirements.txt updated">
+      <option name="closed" value="true" />
+      <created>1750417707962</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1750417707962</updated>
+    </task>
+    <task id="LOCAL-00016" summary="updated mysql workbench code to add in">
+      <option name="closed" value="true" />
+      <created>1750419043484</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1750419043484</updated>
+    </task>
+    <task id="LOCAL-00017" summary="updated mysql workbench code to add in">
+      <option name="closed" value="true" />
+      <created>1750593283221</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1750593283221</updated>
+    </task>
+    <task id="LOCAL-00018" summary="added oauth password recovery">
+      <option name="closed" value="true" />
+      <created>1750595336454</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1750595336454</updated>
+    </task>
+    <task id="LOCAL-00019" summary="added oauth password recovery">
+      <option name="closed" value="true" />
+      <created>1750595722141</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1750595722141</updated>
+    </task>
+    <task id="LOCAL-00020" summary="added oauth password recovery">
+      <option name="closed" value="true" />
+      <created>1750596564981</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1750596564981</updated>
+    </task>
+    <task id="LOCAL-00021" summary="Remove .env from tracking">
+      <option name="closed" value="true" />
+      <created>1751343313519</created>
+      <option name="number" value="00021" />
+      <option name="presentableId" value="LOCAL-00021" />
+      <option name="project" value="LOCAL" />
+      <updated>1751343313519</updated>
+    </task>
+    <option name="localTasksCounter" value="22" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -159,6 +272,5 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="." />
-    <option name="LAST_COMMIT_MESSAGE" value="." />
   </component>
 </project>
