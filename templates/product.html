@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>This is the product page</h1>
+<html>
+<head><title>Product</title></head>
+<body>
+    <h1>{{ product_name }}</h1>
+    <p>Price: ${{ product_price }}</p>
+    <form action="{{ url_for('buy') }}" method="POST">
+        <button type="submit">Buy Now</button>
+    </form>
+    <br>
+<form action="{{ url_for('request_invoice') }}" method="POST">
+    <label>Set password to protect your invoice:</label>
+    <input type="password" name="pdf_password" required>
+    <button type="submit">Request Encrypted Invoice</button>
+</form>
+</body>
+</html>
+
 
 {% endblock %}

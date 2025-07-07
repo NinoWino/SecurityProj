@@ -1,5 +1,14 @@
+# === Standard Library ===
+import os
+import random
+from datetime import datetime, timedelta
+from io import BytesIO
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+# === Third-Party Packages ===
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    session, flash, send_file
+)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 from flask_login import (
@@ -7,19 +16,45 @@ from flask_login import (
     login_required, current_user
 )
 from werkzeug.security import check_password_hash, generate_password_hash
-from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm
-from datetime import datetime, timedelta
-import random
 from flask_mail import Mail, Message
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
-import os
 from dotenv import load_dotenv
+from PyPDF2 import PdfReader, PdfWriter
+from reportlab.pdfgen import canvas
+
+# === Local Modules ===
+from models import db, User
+from forms import (
+    LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm,
+    ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm
+)
+
+# === Load Environment Variables ===
 load_dotenv()
 
+# Encryption key (store securely!)
+# fernet_key = os.getenv("FERNET_KEY")
+# if not fernet_key:
+#     raise ValueError("FERNET_KEY not set in environment")
+#
+# try:
+#     cipher = Fernet(fernet_key.encode())
+# except ValueError:
+#     raise ValueError("FERNET_KEY must be a valid 32-byte base64-encoded string")
+
 app = Flask(__name__)
-# … your existing config …
+
+
+# 🔒 Initialize Limiter
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]  # general rate limit
+)
+
 app.config.update({
     'MAIL_SERVER':   'smtp.gmail.com',
     'MAIL_PORT':     587,
@@ -48,10 +83,14 @@ print (generate_password_hash('test123'))
 app.permanent_session_lifetime = timedelta(seconds=30)
 
 # Secure cookies
-app.config.update({
-    "SESSION_COOKIE_HTTPONLY": True,
-    "SESSION_COOKIE_SAMESITE": "Lax"
-})
+app.config.update(
+    SESSION_COOKIE_SECURE=True,        # Only send cookies over HTTPS
+    SESSION_COOKIE_HTTPONLY=True,      # Prevent access to cookies via JavaScript
+    SESSION_COOKIE_SAMESITE='Lax',     # Protect against CSRF (can be 'Strict', 'Lax', or 'None')
+    REMEMBER_COOKIE_SECURE=True,       # If you're using Flask-Login with "remember me"
+    REMEMBER_COOKIE_HTTPONLY=True,
+    REMEMBER_COOKIE_SAMESITE='Lax'
+)
 
 db.init_app(app)
 
@@ -72,6 +111,9 @@ def add_no_cache_headers(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
     return response
 
 login_manager = LoginManager()
@@ -419,6 +461,7 @@ def verify_reset_otp():
 #     return render_template('register.html', form=form, error=error)
 
 @app.route('/register/email', methods=['GET', 'POST'])
+@limiter.limit("3 per hour")
 def register_email():
     from forms import EmailForm
     form = EmailForm()
@@ -498,7 +541,54 @@ def profile():
 @app.route('/product')
 @login_required
 def product():
-    return render_template('product.html')
+    return render_template('product.html', product_name="Eco Bottle", product_price=15.99)
+
+@app.route('/buy', methods=['POST'])
+@login_required
+def buy():
+    flash("Payment simulated successfully!", "success")
+    return redirect(url_for('product'))
+
+@app.route('/request_invoice', methods=['POST'])
+@login_required
+def request_invoice():
+    user_password = request.form.get('pdf_password')
+    if not user_password or len(user_password) < 6:
+        flash('Password must be at least 6 characters.', 'danger')
+        return redirect(url_for('product'))
+
+    # Step 1: Generate PDF in memory
+    packet = BytesIO()
+    p = canvas.Canvas(packet)
+    p.setFont("Helvetica", 12)
+    p.drawString(100, 750, f"Invoice for {current_user.username}")
+    p.drawString(100, 730, "Product: Eco Bottle")
+    p.drawString(100, 710, "Price: $15.99")
+    p.drawString(100, 690, f"Email: {current_user.email}")
+    p.drawString(100, 670, "Thank you for your purchase!")
+    p.showPage()
+    p.save()
+    packet.seek(0)
+
+    # Step 2: Encrypt the PDF with the entered password
+    reader = PdfReader(packet)
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+
+    owner_password = os.getenv('SECRET_KEY')[:12]  # internal owner password
+    writer.encrypt(user_password, owner_password, use_128bit=True)
+
+    encrypted_pdf = BytesIO()
+    writer.write(encrypted_pdf)
+    encrypted_pdf.seek(0)
+
+    return send_file(
+        encrypted_pdf,
+        as_attachment=True,
+        download_name='invoice_protected.pdf',
+        mimetype='application/pdf'
+    )
 
 @app.route('/stafflogin')
 def stafflogin():
@@ -568,6 +658,7 @@ def delete_account():
             flash('Failed to delete account. Please try again.', 'danger')
 
     return render_template('delete_account.html', form=form)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
