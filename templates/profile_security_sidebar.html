@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-5">
+  <div class="row">
+    <!-- Sidebar Navigation -->
+    <div class="col-md-3 mb-4">
+      <div class="list-group">
+        <a href="{{ url_for('profile') }}" class="list-group-item list-group-item-action {% if request.endpoint == 'profile' %}active{% endif %}">
+          Profile
+        </a>
+        <a href="{{ url_for('security') }}" class="list-group-item list-group-item-action {% if request.endpoint == 'security' %}active{% endif %}">
+          Security
+        </a>
+        <a href="{{ url_for('logout') }}" class="list-group-item list-group-item-action text-danger">
+          Logout
+        </a>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="col-md-9">
+      {% block profile_content %}{% endblock %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -304,7 +304,7 @@ def toggle_2fa():
     if form.validate_on_submit():
         current_user.two_factor_enabled = not current_user.two_factor_enabled
         db.session.commit()
-    return redirect(url_for('profile'))
+    return redirect(url_for('security'))
 
 @app.route('/two_factor', methods=['GET', 'POST'])
 def two_factor():
@@ -485,6 +485,12 @@ def verify_reset_otp():
 
     return render_template('reset_password.html', form=form, error=error)
 
+@app.route('/security')
+@login_required
+def security():
+    toggle_form = Toggle2FAForm()
+    return render_template('security.html', toggle_form=toggle_form)
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -582,9 +588,8 @@ def register_details():
 @app.route('/profile')
 @login_required
 def profile():
-    toggle_form = Toggle2FAForm()
-    return render_template('profile.html',
-                           toggle_form=toggle_form)
+    return render_template('profile.html')
+
 
 @app.route('/product')
 @login_required
