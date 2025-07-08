@@ -7,7 +7,7 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -315,6 +315,12 @@ def two_factor():
     user = db.session.get(User, user_id)
     form = OTPForm()
     error = None
+    attempts = session.get('login_otp_attempts', 0)
+
+    if attempts >= 3:
+        flash('Too many failed attempts. Please log in again.', 'danger')
+        session.pop('pre_2fa_user_id', None)
+        return redirect(url_for('login'))
 
     if form.validate_on_submit():
         token = form.token.data.strip()
@@ -322,21 +328,22 @@ def two_factor():
             error = 'Code expired. Please log in again.'
             session.pop('pre_2fa_user_id', None)
         elif token != user.otp_code:
+            session['login_otp_attempts'] = attempts + 1
             error = 'Invalid code. Please try again.'
         else:
-            # Successful 2FA
             login_user(user)
             session.pop('pre_2fa_user_id', None)
+            session.pop('login_otp_attempts', None)
             session['last_active'] = datetime.utcnow().isoformat()
-            user.failed_attempts   = 0
-            user.otp_code          = None
-            user.otp_expiry        = None
+            user.failed_attempts = 0
+            user.otp_code = None
+            user.otp_expiry = None
             db.session.commit()
             return redirect(url_for('profile'))
 
     resent = bool(request.args.get('resent'))
-
     return render_template('two_factor.html', form=form, error=error, resent=resent)
+
 
 @app.route('/resend_code')
 def resend_code():
@@ -366,6 +373,53 @@ def resend_code():
 
     # redirect back with a flag
     return redirect(url_for('two_factor', resent=1))
+
+@app.route('/resend_register_otp')
+def resend_register_otp():
+    email = session.get('register_email')
+    if not email:
+        flash('Session expired. Please start again.', 'danger')
+        return redirect(url_for('register_email'))
+
+    otp = f"{random.randint(0, 999999):06d}"
+    session['register_otp'] = otp
+    session['register_otp_expiry'] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+    session['register_otp_attempts'] = 0
+
+    msg = Message(
+        subject="Your New Registration OTP",
+        recipients=[email],
+        body=f"Your new OTP is: {otp}\nIt expires in 5 minutes."
+    )
+    mail.send(msg)
+
+    flash('A new OTP has been sent.', 'info')
+    return redirect(url_for('register_details'))
+
+@app.route('/resend_reset_otp')
+def resend_reset_otp():
+    if 'reset_user_id' not in session:
+        return redirect(url_for('forgot_password'))
+
+    user = db.session.get(User, session['reset_user_id'])
+
+    otp = f"{random.randint(0, 999999):06d}"
+    user.otp_code = otp
+    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+    db.session.commit()
+
+    session['reset_otp_attempts'] = 0
+
+    msg = Message(
+        subject="Your New Reset Password OTP",
+        recipients=[user.email],
+        body=f"Your new OTP code is: {otp}\nIt expires in 5 minutes."
+    )
+    mail.send(msg)
+
+    flash('A new OTP has been sent.', 'info')
+    return redirect(url_for('verify_reset_otp'))
+
 
 @app.route('/forgot_password', methods=['GET', 'POST'])
 def forgot_password():
@@ -405,11 +459,18 @@ def verify_reset_otp():
     user = db.session.get(User, session['reset_user_id'])
     form = ResetPasswordForm()
     error = None
+    attempts = session.get('reset_otp_attempts', 0)
+
+    if attempts >= 3:
+        flash('Too many incorrect OTP attempts. Please try again.', 'danger')
+        session.pop('reset_user_id', None)
+        return redirect(url_for('forgot_password'))
 
     if form.validate_on_submit():
         if datetime.utcnow() > user.otp_expiry:
             error = "OTP expired."
         elif form.otp.data != user.otp_code:
+            session['reset_otp_attempts'] = attempts + 1
             error = "Invalid OTP."
         elif check_password_hash(user.password, form.new_password.data):
             error = "New password must be different from the current password."
@@ -419,9 +480,11 @@ def verify_reset_otp():
             user.otp_expiry = None
             db.session.commit()
             session.pop('reset_user_id', None)
+            session.pop('reset_otp_attempts', None)
             return redirect(url_for('login', message='pw_changed'))
 
     return render_template('reset_password.html', form=form, error=error)
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -439,66 +502,81 @@ def register_email():
     if form.validate_on_submit():
         email = form.email.data.strip()
 
-        # Check if email is already registered
-        from models import User
         if User.query.filter_by(email=email).first():
             flash('Email is already registered. Please log in.', 'danger')
             return redirect(url_for('login'))
 
-        # TODO: Generate OTP here in future
-        # otp = generate_otp()
-
-        # Store email (and OTP later) in session temporarily
+        otp = f"{random.randint(0, 999999):06d}"
         session['register_email'] = email
-        # session['register_otp'] = otp
+        session['register_otp'] = otp
+        session['register_otp_expiry'] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+        session['register_otp_attempts'] = 0
 
-        flash('Proceed to complete your registration.', 'info')
+        msg = Message(
+            subject="Your Registration OTP",
+            recipients=[email],
+            body=f"Your OTP is: {otp}\nIt expires in 5 minutes."
+        )
+        mail.send(msg)
+
+        flash('OTP sent to your email.', 'info')
         return redirect(url_for('register_details'))
 
     return render_template('register_email.html', form=form)
 
+
 @app.route('/register/details', methods=['GET', 'POST'])
 def register_details():
-    from forms import RegisterDetailsForm
     form = RegisterDetailsForm()
-
     email = session.get('register_email')
-    if not email:
-        flash('Session expired or invalid access. Please restart registration.', 'danger')
+    otp = session.get('register_otp')
+    expiry_str = session.get('register_otp_expiry')
+    attempts = session.get('register_otp_attempts', 0)
+
+    if not email or not otp or not expiry_str:
+        flash('Session expired. Start again.', 'danger')
+        return redirect(url_for('register_email'))
+
+    otp_expiry = datetime.fromisoformat(expiry_str)
+
+    if attempts >= 3:
+        flash('Too many incorrect OTP attempts. Please request a new code.', 'danger')
+        session.clear()
         return redirect(url_for('register_email'))
 
     if form.validate_on_submit():
         otp_input = form.otp.data.strip()
 
-        # TODO: Verify OTP here in future
-        # if otp_input != session.get('register_otp'):
-        #     flash('Invalid OTP.', 'danger')
-        #     return render_template('register_details.html', form=form, email=email)
+        if datetime.utcnow() > otp_expiry:
+            flash('OTP expired.', 'danger')
+            session.clear()
+            return redirect(url_for('register_email'))
 
-        # Check if username already exists
-        from models import User
+        if otp_input != otp:
+            session['register_otp_attempts'] = attempts + 1
+            flash('Invalid OTP.', 'danger')
+            return render_template('register_details.html', form=form, email=email)
+
         if User.query.filter_by(username=form.username.data.strip()).first():
             form.username.errors.append('Username already taken.')
             return render_template('register_details.html', form=form, email=email)
 
-        hashed_pw = generate_password_hash(form.password.data)
         new_user = User(
             username=form.username.data.strip(),
             email=email,
-            password=hashed_pw,
+            password=generate_password_hash(form.password.data),
             role_id=1
         )
         db.session.add(new_user)
         db.session.commit()
 
-        # Clear session data
-        session.pop('register_email', None)
-        # session.pop('register_otp', None)
-
+        session.clear()
         flash('Registration successful. Please log in.', 'success')
         return redirect(url_for('login'))
 
     return render_template('register_details.html', form=form, email=email)
+
+
 
 
 @app.route('/profile')
