@@ -8,12 +8,12 @@
       {{ form.hidden_tag() }}
       <input type="hidden" id="token-field" name="{{ form.token.name }}">
       <div class="d-flex justify-content-center gap-2 my-4 verification-input-container">
-        <input type="text" name="digit1" maxlength="1" class="form-control text-center verification-input" autofocus>
-        <input type="text" name="digit2" maxlength="1" class="form-control text-center verification-input">
-        <input type="text" name="digit3" maxlength="1" class="form-control text-center verification-input">
-        <input type="text" name="digit4" maxlength="1" class="form-control text-center verification-input">
-        <input type="text" name="digit5" maxlength="1" class="form-control text-center verification-input">
-        <input type="text" name="digit6" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit1" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input" autofocus>
+        <input type="text" name="digit2" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
+        <input type="text" name="digit3" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
+        <input type="text" name="digit4" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
+        <input type="text" name="digit5" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
+        <input type="text" name="digit6" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
       </div>
       <button type="submit" class="btn btn-dark w-100">Verify Account</button>
       {% if resent %}
@@ -47,22 +47,26 @@
   const inputs = document.querySelectorAll('.verification-input');
   const container = document.querySelector('.verification-input-container');
 
-  // Auto-forward focus and handle navigation
   inputs.forEach((input, idx) => {
-    input.addEventListener('input', () => {
-      if (input.value.length === 1 && idx < inputs.length - 1) {
-        inputs[idx + 1].focus();
-      }
-      if (input.value.length > 1) {
-        input.value = input.value.charAt(0);
+    // Block non-numeric input
+    input.addEventListener('keypress', (e) => {
+      if (!/[0-9]/.test(e.key)) {
+        e.preventDefault();
       }
     });
 
+    // Auto-forward and strip invalid characters
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '');  // remove non-digits
+      if (input.value.length === 1 && idx < inputs.length - 1) {
+        inputs[idx + 1].focus();
+      }
+    });
+
+    // Handle keyboard nav
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Backspace') {
-        if (!input.value && idx > 0) {
-          inputs[idx - 1].focus();
-        }
+      if (e.key === 'Backspace' && !input.value && idx > 0) {
+        inputs[idx - 1].focus();
       } else if (e.key === 'ArrowLeft' && idx > 0) {
         inputs[idx - 1].focus();
         e.preventDefault();
@@ -81,23 +85,22 @@
       paste.split('').forEach((d, i) => {
         inputs[i].value = d;
       });
-      // focus next empty or last
       const firstEmpty = Array.from(inputs).find(inp => !inp.value);
       (firstEmpty || inputs[inputs.length - 1]).focus();
     });
   });
 
-  // Clicking anywhere on container focuses the first empty input
   container.addEventListener('click', () => {
     const firstEmpty = Array.from(inputs).find(inp => !inp.value);
     (firstEmpty || inputs[0]).focus();
   });
 
-  // Collect digits into hidden field on submit
+  // Combine input values into hidden field
   document.getElementById('otpForm').addEventListener('submit', function(e) {
     const token = Array.from(inputs).map(inp => inp.value).join('');
     document.getElementById('token-field').value = token;
   });
 })();
 </script>
+
 {% endblock %}

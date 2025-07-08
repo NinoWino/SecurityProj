@@ -42,9 +42,8 @@ app.config['GOOGLE_DISCOVERY_URL'] = "https://accounts.google.com/.well-known/op
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 
-print (generate_password_hash('test123'))
 # Session timeout settings
-app.permanent_session_lifetime = timedelta(seconds=30)
+app.permanent_session_lifetime = timedelta(minutes=30)
 
 # Secure cookies
 app.config.update({
@@ -100,7 +99,7 @@ def check_session_timeout():
         last_active = session.get('last_active')
         if last_active:
             last_active = datetime.fromisoformat(last_active)
-            if now - last_active > timedelta(seconds=30):
+            if now - last_active > timedelta(minutes=30):
                 logout_user()
                 session.clear()
                 return redirect(url_for('login', message='timeout'))
@@ -390,32 +389,6 @@ def verify_reset_otp():
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# @app.route('/register', methods=['GET', 'POST'])
-# def register():
-#     if current_user.is_authenticated:
-#         return redirect(url_for('profile'))
-#
-#     from forms import RegisterForm
-#     form = RegisterForm()
-#     error = None
-#
-#     if form.validate_on_submit():
-#         try:
-#             hashed_pw = generate_password_hash(form.password.data)
-#             new_user = User(
-#                 username=form.username.data.strip(),
-#                 email=form.email.data.strip(),
-#                 password=hashed_pw,
-#                 role_id=1
-#             )
-#             db.session.add(new_user)
-#             db.session.commit()
-#             return redirect(url_for('login', message='registered'))
-#         except Exception as e:
-#             db.session.rollback()
-#             error = "Registration failed. Please try again."
-#
-#     return render_template('register.html', form=form, error=error)
 
 @app.route('/register/email', methods=['GET', 'POST'])
 def register_email():
@@ -561,7 +534,7 @@ def delete_account():
             db.session.commit()
             session.clear()
             flash('Account deleted successfully.', 'success')
-            return redirect(url_for('home'))
+            return redirect(url_for('login'))
         except Exception:
             db.session.rollback()
             flash('Failed to delete account. Please try again.', 'danger')
