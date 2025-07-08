@@ -15,6 +15,10 @@ from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
 import os
 from dotenv import load_dotenv
+import requests
+from user_agents import parse as parse_ua
+from pytz import timezone
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -91,6 +95,23 @@ def on_unauthorized():
         return redirect(url_for('login', message='timeout'))
     return redirect(url_for('login'))
 
+def get_location_data(ip):
+    try:
+        response = requests.get(f'https://ipapi.co/{ip}/json/', timeout=2)
+        data = response.json()
+        return {
+            'ip': ip,
+            'city': data.get('city', 'Unknown'),
+            'region': data.get('region', 'Unknown'),
+            'country': data.get('country_name', 'Unknown')
+        }
+    except Exception:
+        return {'ip': ip, 'city': 'Unknown', 'region': 'Unknown', 'country': 'Unknown'}
+
+def get_device_info(user_agent_string):
+    ua = parse_ua(user_agent_string)
+    return f"{ua.os.family} {ua.os.version_string} - {ua.browser.family} {ua.browser.version_string}"
+
 
 @app.before_request
 def check_session_timeout():
@@ -112,14 +133,13 @@ def home():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    # If they’re already logged in, send them home
     if current_user.is_authenticated:
         return redirect(url_for('profile'))
+
     form  = LoginForm()
     error = None
 
-    # Lockout policy
-    LOCK_DURATION = timedelta(seconds=20)
+    LOCK_DURATION = timedelta(minutes=20)
     MAX_ATTEMPTS  = 3
 
     if form.validate_on_submit():
@@ -127,32 +147,30 @@ def login():
         user = db.session.scalars(stmt).first()
 
         if user:
-            # Account lockout
+            # Account lockout check
             if user.is_locked:
                 last = user.last_failed_login
                 if last and datetime.utcnow() - last >= LOCK_DURATION:
                     user.failed_attempts = 0
-                    user.is_locked       = False
+                    user.is_locked = False
                     db.session.commit()
                 else:
                     error = "Account locked. Please try again later."
-                    return render_template('login.html',
-                                           form=form, error=error)
+                    return render_template('login.html', form=form, error=error)
 
-            # Password validation
+            # Password check
             if check_password_hash(user.password, form.password.data):
-                # Email‐OTP 2FA
+                # Handle 2FA if enabled
                 if user.two_factor_enabled:
                     code = f"{random.randint(0, 999999):06d}"
-                    user.otp_code   = code
+                    user.otp_code = code
                     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
                     db.session.commit()
 
                     msg = Message(
                         subject="Your One-Time Login Code",
                         recipients=[user.email],
-                        body=f"Hello {user.username},\n\nYour login code is: {code}\n\n"
-                             "It expires in 5 minutes."
+                        body=f"Hello {user.username},\n\nYour login code is: {code}\n\nIt expires in 5 minutes."
                     )
                     mail.send(msg)
 
@@ -162,13 +180,36 @@ def login():
                 # No 2FA: complete login
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
-                user.failed_attempts   = 0
+                user.failed_attempts = 0
                 db.session.commit()
+
+                # ==== 📧 Send login alert email ====
+                ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+                ua_string = request.headers.get('User-Agent', '')
+                location = get_location_data(ip)
+                device_info = get_device_info(ua_string)
+                sg_time = datetime.utcnow().replace(tzinfo=timezone('UTC')).astimezone(timezone('Asia/Singapore'))
+                msg = Message(
+                    subject="New Login to Your Account",
+                    recipients=[user.email],
+                    body=(
+                        f"Hi {user.username},\n\n"
+                        f"A new login to your account was detected:\n\n"
+                        f"📍 IP Address: {location['ip']}\n"
+                        f"🌍 Location: {location['city']}, {location['region']}, {location['country']}\n"
+                        f"💻 Device: {device_info}\n"
+                        f"🕒 Time: {sg_time.strftime('%Y-%m-%d %H:%M:%S')} SGT\n\n"
+                        "If this wasn’t you, please reset your password immediately or contact support."
+                    )
+                )
+                mail.send(msg)
+                # ==== ✅ End login alert ====
+
                 return redirect(url_for('profile'))
 
-            # Wrong password
-            user.failed_attempts   += 1
-            user.last_failed_login  = datetime.utcnow()
+            # Incorrect password
+            user.failed_attempts += 1
+            user.last_failed_login = datetime.utcnow()
             if user.failed_attempts >= MAX_ATTEMPTS:
                 user.is_locked = True
             db.session.commit()
@@ -179,7 +220,7 @@ def login():
     return render_template('login.html',
                            form=form,
                            error=error,
-                           message=request.args.get('message'))\
+                           message=request.args.get('message'))
 
 @app.route('/login/google')
 def login_google():
