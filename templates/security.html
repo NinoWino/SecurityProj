@@ -1,0 +1,38 @@
+{% extends "profile_security_sidebar.html" %}
+{% block profile_content %}
+<div class="card shadow-sm">
+  <div class="card-header bg-dark text-white">
+    <h2 class="mb-0">Security Settings</h2>
+  </div>
+  <div class="card-body">
+
+    <h5 class="border-bottom pb-2">Account</h5>
+    <div class="d-flex flex-column gap-2 mb-4">
+      <a href="{{ url_for('change_password') }}" class="btn btn-outline-primary w-100">Change Password</a>
+      <a href="{{ url_for('change_email') }}" class="btn btn-outline-secondary w-100">Change Email</a>
+      <a href="{{ url_for('change_username') }}" class="btn btn-outline-secondary w-100">Change Username</a>
+      <a href="{{ url_for('delete_account') }}" class="btn btn-outline-danger w-100">Delete Account</a>
+    </div>
+
+    <h5 class="border-bottom pb-2">Two-Factor Authentication (2FA)</h5>
+    <div class="d-flex justify-content-between align-items-center">
+      <span>
+        {% if current_user.two_factor_enabled %}
+          <span class="badge bg-success">Enabled</span>
+        {% else %}
+          <span class="badge bg-danger">Disabled</span>
+        {% endif %}
+      </span>
+      <form method="POST" action="{{ url_for('toggle_2fa') }}">
+        {{ toggle_form.hidden_tag() }}
+        {% if current_user.two_factor_enabled %}
+          <button type="submit" class="btn btn-outline-warning">Disable 2FA</button>
+        {% else %}
+          <button type="submit" class="btn btn-outline-success">Enable 2FA (Secure)</button>
+        {% endif %}
+      </form>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

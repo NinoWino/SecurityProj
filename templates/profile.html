@@ -1,59 +1,21 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="container mt-5">
-  <div class="card shadow-sm">
-    <div class="card-header bg-dark text-white">
-      <h2 class="mb-0">Profile Page</h2>
-    </div>
-    <div class="card-body">
-      <p>Your account details are below:</p>
-      <table class="table table-striped table-bordered">
-        <tbody>
-          <tr>
-            <th scope="row" class="w-25">Username:</th>
-            <td>{{ current_user.username }}</td>
-          </tr>
-          <tr>
-            <th scope="row" class="w-25">Email:</th>
-            <td>{{ current_user.email }}</td>
-          </tr>
-        </tbody>
-      </table>
-          <div class="mt-4 d-flex justify-content-end gap-2">
-      <a href="{{ url_for('change_password') }}" class="btn btn-secondary">
-        Change Password
-      </a>
-            <a href="{{ url_for('delete_account') }}" class="btn btn-secondary">
-        Delete Account
-      </a>
-
-            <a href="{{ url_for('change_email') }}" class="btn btn-secondary">
-        Change Email
-      </a>
-            <a href="{{ url_for('change_username') }}" class="btn btn-secondary">
-        Change Username
-      </a>
-
-
-      <form method="POST" action="{{ url_for('toggle_2fa') }}" class="d-inline">
-        {{ toggle_form.hidden_tag() }}
-        {% if current_user.two_factor_enabled %}
-          <button type="submit" class="btn btn-outline-warning">
-            Disable 2FA
-          </button>
-        {% else %}
-          <button type="submit" class="btn btn-outline-success">
-            Enable 2FA
-          </button>
-        {% endif %}
-      </form>
-
-      <a href="{{ url_for('logout') }}" class="btn btn-danger">
-        Logout
-      </a>
-    </div>
-
-    </div>
+{% extends "profile_security_sidebar.html" %}
+{% block profile_content %}
+<div class="card shadow-sm">
+  <div class="card-header bg-dark text-white">
+    <h2 class="mb-0">Profile</h2>
+  </div>
+  <div class="card-body">
+    <p>Your account details:</p>
+    <table class="table table-striped table-bordered">
+      <tr>
+        <th>Username</th>
+        <td>{{ current_user.username }}</td>
+      </tr>
+      <tr>
+        <th>Email</th>
+        <td>{{ current_user.email }}</td>
+      </tr>
+    </table>
   </div>
 </div>
 {% endblock %}

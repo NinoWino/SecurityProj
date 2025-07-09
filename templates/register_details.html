@@ -14,6 +14,9 @@
           <div class="text-danger">{{ error }}</div>
         {% endfor %}
       </div>
+      <p class="text-center mt-3">
+        Didn’t receive code? <a href="{{ url_for('resend_register_otp') }}">Resend OTP</a>
+      </p>
 
       <div class="mb-3">
         {{ form.username.label(class="form-label") }}
