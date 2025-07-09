@@ -95,18 +95,32 @@ def on_unauthorized():
         return redirect(url_for('login', message='timeout'))
     return redirect(url_for('login'))
 
-def get_location_data(ip):
+def get_public_ip():
     try:
-        response = requests.get(f'https://ipapi.co/{ip}/json/', timeout=2)
-        data = response.json()
+        res = requests.get('https://api.ipify.org?format=json', timeout=3)
+        return res.json().get('ip')
+    except Exception:
+        return '127.0.0.1'  # fallback
+
+def get_location_data(_unused_local_ip=None):
+    ip = get_public_ip()
+    try:
+        res = requests.get(f'https://ipwhois.app/json/{ip}', timeout=3)
+        data = res.json()
         return {
             'ip': ip,
             'city': data.get('city', 'Unknown'),
             'region': data.get('region', 'Unknown'),
-            'country': data.get('country_name', 'Unknown')
+            'country': data.get('country', 'Unknown')
         }
     except Exception:
-        return {'ip': ip, 'city': 'Unknown', 'region': 'Unknown', 'country': 'Unknown'}
+        return {
+            'ip': ip,
+            'city': 'Unknown',
+            'region': 'Unknown',
+            'country': 'Unknown'
+        }
+
 
 def get_device_info(user_agent_string):
     ua = parse_ua(user_agent_string)
@@ -125,6 +139,38 @@ def check_session_timeout():
                 session.clear()
                 return redirect(url_for('login', message='timeout'))
         session['last_active'] = now.isoformat()
+def send_login_alert_email(user):
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    ua_string = request.headers.get('User-Agent', '')
+    location = get_location_data()
+    device_info = get_device_info(ua_string)
+    sg_time = datetime.utcnow().replace(tzinfo=timezone('UTC')).astimezone(timezone('Asia/Singapore'))
+
+    msg = Message(
+        subject="New Login to Your Account",
+        recipients=[user.email],
+        body=(
+            f"Hi {user.username},\n\n"
+            f"A new login to your account was detected:\n\n"
+            f"📍 IP Address: {location['ip']}\n"
+            f"🌍 Location: {location['city']}, {location['region']}, {location['country']}\n"
+            f"💻 Device: {device_info}\n"
+            f"🕒 Time: {sg_time.strftime('%Y-%m-%d %H:%M:%S')} SGT\n\n"
+            "If this wasn’t you, please reset your password or contact support."
+        )
+    )
+    mail.send(msg)
+
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 
 # Routes
 @app.route('/')
@@ -136,11 +182,10 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('profile'))
 
-    form  = LoginForm()
+    form = LoginForm()
     error = None
-
-    LOCK_DURATION = timedelta(minutes=20)
-    MAX_ATTEMPTS  = 3
+    LOCK_DURATION = timedelta(seconds=20)
+    MAX_ATTEMPTS = 3
 
     if form.validate_on_submit():
         stmt = select(User).filter_by(email=form.email.data)
@@ -149,8 +194,7 @@ def login():
         if user:
             # Account lockout check
             if user.is_locked:
-                last = user.last_failed_login
-                if last and datetime.utcnow() - last >= LOCK_DURATION:
+                if user.last_failed_login and datetime.utcnow() - user.last_failed_login >= LOCK_DURATION:
                     user.failed_attempts = 0
                     user.is_locked = False
                     db.session.commit()
@@ -158,9 +202,7 @@ def login():
                     error = "Account locked. Please try again later."
                     return render_template('login.html', form=form, error=error)
 
-            # Password check
             if check_password_hash(user.password, form.password.data):
-                # Handle 2FA if enabled
                 if user.two_factor_enabled:
                     code = f"{random.randint(0, 999999):06d}"
                     user.otp_code = code
@@ -177,37 +219,16 @@ def login():
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor'))
 
-                # No 2FA: complete login
+                # ✅ No 2FA → complete login and notify
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
                 user.failed_attempts = 0
                 db.session.commit()
 
-                # ==== 📧 Send login alert email ====
-                ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-                ua_string = request.headers.get('User-Agent', '')
-                location = get_location_data(ip)
-                device_info = get_device_info(ua_string)
-                sg_time = datetime.utcnow().replace(tzinfo=timezone('UTC')).astimezone(timezone('Asia/Singapore'))
-                msg = Message(
-                    subject="New Login to Your Account",
-                    recipients=[user.email],
-                    body=(
-                        f"Hi {user.username},\n\n"
-                        f"A new login to your account was detected:\n\n"
-                        f"📍 IP Address: {location['ip']}\n"
-                        f"🌍 Location: {location['city']}, {location['region']}, {location['country']}\n"
-                        f"💻 Device: {device_info}\n"
-                        f"🕒 Time: {sg_time.strftime('%Y-%m-%d %H:%M:%S')} SGT\n\n"
-                        "If this wasn’t you, please reset your password immediately or contact support."
-                    )
-                )
-                mail.send(msg)
-                # ==== ✅ End login alert ====
-
+                send_login_alert_email(user)  # move into helper
                 return redirect(url_for('profile'))
 
-            # Incorrect password
+            # Password incorrect
             user.failed_attempts += 1
             user.last_failed_login = datetime.utcnow()
             if user.failed_attempts >= MAX_ATTEMPTS:
@@ -217,10 +238,7 @@ def login():
         else:
             error = 'Email not found.'
 
-    return render_template('login.html',
-                           form=form,
-                           error=error,
-                           message=request.args.get('message'))
+    return render_template('login.html', form=form, error=error, message=request.args.get('message'))
 
 @app.route('/login/google')
 def login_google():
@@ -339,11 +357,12 @@ def two_factor():
             user.otp_code = None
             user.otp_expiry = None
             db.session.commit()
+
+            send_login_alert_email(user)  # ✅ send only after OTP success
             return redirect(url_for('profile'))
 
     resent = bool(request.args.get('resent'))
     return render_template('two_factor.html', form=form, error=error, resent=resent)
-
 
 @app.route('/resend_code')
 def resend_code():
