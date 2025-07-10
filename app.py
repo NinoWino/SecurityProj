@@ -503,15 +503,62 @@ def security():
 @app.route('/register/email', methods=['GET', 'POST'])
 def register_email():
     from forms import EmailForm
+    from sqlalchemy import func
+    import re
+
     form = EmailForm()
 
     if form.validate_on_submit():
-        email = form.email.data.strip()
+        email = form.email.data.strip().lower()
+        local_part = email.split('@')[0]
+        domain = email.split('@')[1]
 
+        disposable_domains = [
+            "mailinator.com", "tempmail.com", "10minutemail.com", "guerrillamail.com",
+            "trashmail.com", "maildrop.cc", "yopmail.com", "getnada.com", "sharklasers.com",
+            "spamgourmet.com", "mintemail.com", "fenexy.com", "mail.tm",
+            "emailtemporario.com", "temporaryemail.com", "throwawaymail.com"
+        ]
+        if domain in disposable_domains:
+            flash('This email is not allowed for registration.', 'danger')
+            return redirect(url_for('register_email'))
+
+        # Bot and disposable email patterns
+        bot_patterns = [
+            r"test\d*@", r"fake\d*@", r"bot\d*@",
+            r"(noreply|no-reply|donotreply)",
+            r"(mailinator|tempmail|10minutemail|guerrillamail|dispostable|trashmail|maildrop|yopmail|getnada|spamgourmet|sharklasers|mintemail|fenexy|mail.tm|emailtemporario|temporaryemail|throwawaymail)"
+        ]
+
+        for pattern in bot_patterns:
+            if re.search(pattern, email):
+                flash('This email is not allowed for registration.', 'danger')
+                return redirect(url_for('register_email'))
+
+        # Block repeated substring usernames (e.g., abcabcabc)
+        for i in range(1, len(local_part) // 2):
+            segment = local_part[:i]
+            repeat_count = len(local_part) // len(segment)
+            if segment * repeat_count == local_part:
+                flash('This email is not allowed for registration.', 'danger')
+                return redirect(url_for('register_email'))
+
+        # Already exists check
         if User.query.filter_by(email=email).first():
-            flash('Email is already registered. Please log in.', 'danger')
-            return redirect(url_for('login'))
+            flash('This email is not allowed for registration.', 'danger')
+            return redirect(url_for('register_email'))
 
+        # Repetition detection: Flag if too many similar usernames exist
+        prefix = re.sub(r'\d+$', '', local_part)  # base without trailing digits
+        if prefix:
+            similar_count = User.query.filter(
+                func.lower(User.email).like(f"{prefix.lower()}%@{domain}")
+            ).count()
+            if similar_count >= 3:
+                flash('This email is not allowed for registration.', 'danger')
+                return redirect(url_for('register_email'))
+
+        # Generate OTP
         otp = f"{random.randint(0, 999999):06d}"
         session['register_email'] = email
         session['register_otp'] = otp
@@ -529,6 +576,8 @@ def register_email():
         return redirect(url_for('register_details'))
 
     return render_template('register_email.html', form=form)
+
+
 
 
 @app.route('/register/details', methods=['GET', 'POST'])
@@ -571,6 +620,8 @@ def register_details():
             username=form.username.data.strip(),
             email=email,
             password=generate_password_hash(form.password.data),
+            phone=form.phone.data.strip(),
+            birthdate=form.birthdate.data,
             role_id=1
         )
         db.session.add(new_user)

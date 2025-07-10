@@ -1,6 +1,6 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField
-from wtforms.validators import DataRequired, Email, EqualTo, Length
+from wtforms import StringField, PasswordField, SubmitField, DateField
+from wtforms.validators import DataRequired, Email, EqualTo, Length ,ValidationError, Regexp
 from flask_wtf.recaptcha import RecaptchaField
 from wtforms import ValidationError
 from flask_login import current_user
@@ -92,33 +92,41 @@ class EmailForm(FlaskForm):
     submit = SubmitField('Next')
 
 class RegisterDetailsForm(FlaskForm):
-    otp = StringField('OTP', validators=[DataRequired(), Length(min=6, max=6)])  # placeholder, implement verification later
+    otp = StringField('OTP', validators=[DataRequired(), Length(min=6, max=6)])
+
     username = StringField('Username', validators=[
         DataRequired(),
         Length(min=3, max=25, message="Username must be 3-25 characters.")
     ])
+
+    phone = StringField('Phone Number', validators=[
+        DataRequired(),
+        Regexp(r'^\+?\d{8,15}$', message='Enter a valid phone number.')
+    ])
+
+    birthdate = DateField('Birthdate (YYYY-MM-DD)', format='%Y-%m-%d', validators=[DataRequired()])
+
     password = PasswordField('Password', validators=[
         DataRequired(),
         Length(min=8, message='At least 8 characters.')
     ])
+
     confirm_password = PasswordField('Confirm Password', validators=[
         DataRequired(),
         EqualTo('password', message='Passwords must match.')
     ])
+
     submit = SubmitField('Register')
 
-class ChangeUsernameForm(FlaskForm):
-    new_username = StringField('New Username', validators=[
-        DataRequired(),
-        Length(min=3, max=25, message="Username must be 3-25 characters.")
-    ])
-    submit = SubmitField('Change Username')
-
-    def validate_new_username(self, field):
+    def validate_phone(self, field):
         from models import User
-        user = User.query.filter_by(username=field.data).first()
-        if user and user.id != current_user.id:
-            raise ValidationError('Username is already taken.')
+        if User.query.filter_by(phone=field.data.strip()).first():
+            raise ValidationError('This phone number is already in use.')
+
+    def validate_username(self, field):
+        from models import User
+        if User.query.filter_by(username=field.data.strip()).first():
+            raise ValidationError('Username already taken.')
 
 class ChangeEmailForm(FlaskForm):
     new_email = StringField('New Email', validators=[

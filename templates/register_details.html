@@ -1,7 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="container mt-5">
   <div class="col-md-5 mx-auto">
+
+        <!-- ✅ Flash messages block -->
+    <div class="container mt-3">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+              {{ message }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+    <!-- ✅ End flash block -->
+
     <h3 class="text-center mb-4">Complete Registration</h3>
     <p class="text-center">Email: {{ email }}</p>
     <form method="POST">
@@ -27,6 +44,25 @@
       </div>
 
       <div class="mb-3">
+        {{ form.phone.label(class="form-label") }}
+        {{ form.phone(class="form-control") }}
+        {% for error in form.phone.errors %}
+          <div class="text-danger">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+
+
+      <div class="mb-3">
+        {{ form.birthdate.label(class="form-label") }}
+        {{ form.birthdate(class="form-control", type="date") }}
+        {% for error in form.birthdate.errors %}
+          <div class="text-danger">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+
+      <div class="mb-3">
         {{ form.password.label(class="form-label") }}
         {{ form.password(class="form-control") }}
         {% for error in form.password.errors %}
@@ -41,6 +77,9 @@
           <div class="text-danger">{{ error }}</div>
         {% endfor %}
       </div>
+
+
+
 
       {{ form.submit(class="btn btn-dark w-100") }}
     </form>
