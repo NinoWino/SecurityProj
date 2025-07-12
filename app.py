@@ -7,7 +7,7 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -17,6 +17,10 @@ import os, requests, pyotp, qrcode, io
 from dotenv import load_dotenv
 from user_agents import parse as parse_ua
 from pytz import timezone
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_limiter.errors import RateLimitExceeded
+
 
 load_dotenv()
 
@@ -78,6 +82,13 @@ def add_no_cache_headers(response):
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[]  # so we control manually
+)
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -197,6 +208,23 @@ def send_login_alert_email(user):
         flash("Failed to send email. Please try again later.", "danger")
         return redirect(url_for('login'))
 
+def send_otp_email(user, subject, body_template):
+    from flask_mail import Message
+    from datetime import datetime, timedelta
+    import random
+
+    code = f"{random.randint(0, 999999):06d}"
+    user.otp_code = code
+    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+    db.session.commit()
+
+    msg = Message(
+        subject=subject,
+        recipients=[user.email],
+        body=body_template.format(username=user.username, code=code)
+    )
+    mail.send(msg)
+    return code
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -395,29 +423,51 @@ def forgot_password():
     error = None
 
     if form.validate_on_submit():
-        stmt = select(User).filter_by(email=form.email.data)
+        try:
+            # Inline rate limiting: max 3 requests per 5 minutes per IP
+            limiter.limit("3 per minute")(lambda: None)()
+        except RateLimitExceeded:
+            # Store a manual timer (optional, for JS countdown)
+            wait_until = datetime.utcnow() + timedelta(minutes=5)
+            session['reset_wait_until'] = wait_until.isoformat()
+            wait_seconds = 60
+            error = "Too many OTP resends. Please wait before trying again."
+            return render_template(
+                'forgot_password.html',
+                form=ResetPasswordForm(),
+                error=error,
+                wait_seconds=wait_seconds
+            )
+
+        email = form.email.data.strip().lower()
+        stmt = select(User).filter_by(email=email)
         user = db.session.scalars(stmt).first()
+
         if user:
             code = f"{random.randint(0, 999999):06d}"
             user.otp_code = code
             user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
             db.session.commit()
 
-            msg = Message(
-                subject="Reset Password Code",
-                recipients=[user.email],
-                body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
-            )
-            try:
-                mail.send(msg)
-            except Exception as e:
-                flash("Failed to send email. Please try again later.", "danger")
-                return redirect(url_for('login'))
-
             session['reset_user_id'] = user.id
+            session['reset_otp_attempts'] = 0
+            session['reset_resend_attempts'] = 0
+            session['reset_block_until'] = None
+
+            try:
+                msg = Message(
+                    subject="Reset Password Code",
+                    recipients=[user.email],
+                    body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
+                )
+                mail.send(msg)
+            except Exception:
+                error = "Failed to send email. Please try again later."
+                return render_template('forgot_password.html', form=form, error=error)
+
             return redirect(url_for('verify_reset_otp'))
-        else:
-            error = "Email not found."
+
+        error = "Email not found."
 
     return render_template('forgot_password.html', form=form, error=error)
 
@@ -480,92 +530,106 @@ def two_factor():
     resent = bool(request.args.get('resent'))
     return render_template('two_factor.html', form=form, error=error, resent=resent)
 
-@app.route('/resend_code')
-def resend_code():
-    user_id = session.get('pre_2fa_user_id')
-    if not user_id:
-        return redirect(url_for('login'))
+@app.route('/resend_otp/<context>')
+def resend_otp(context):
+    now = datetime.utcnow()
 
-    user = db.session.get(User, user_id)
+    # --------- LOGIN (2FA via email) ---------
+    if context == 'login':
+        user_id = session.get('pre_2fa_user_id')
+        if not user_id:
+            return redirect(url_for('login'))
 
-    # generate & store new code
-    code = f"{random.randint(0, 999999):06d}"
-    user.otp_code   = code
-    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-    db.session.commit()
+        user = db.session.get(User, user_id)
 
-    # email it out
-    msg = Message(
-        subject="Your One-Time Login Code (Resent)",
-        recipients=[user.email],
-        body=(
-            f"Hello {user.username},\n\n"
-            f"Your new login code is: {code}\n\n"
-            "It expires in 5 minutes."
+        try:
+            limiter.limit("3 per minute", key_func=lambda: f"resend-login:{user.email}")(lambda: None)()
+        except RateLimitExceeded:
+            session['login_wait_until'] = (now + timedelta(minutes=1)).isoformat()
+            return render_template(
+                'two_factor.html',
+                form=OTPForm(),
+                error="Too many OTP resends. Please wait before trying again.",
+                wait_seconds=60
+            )
+
+        try:
+            send_otp_email(
+                user,
+                subject="Your One-Time Login Code (Resent)",
+                body_template="Hello {username},\n\nYour new login code is: {code}\nIt expires in 5 minutes."
+            )
+        except Exception:
+            return render_template('two_factor.html', form=OTPForm(), error="Failed to send email.")
+
+        return render_template('two_factor.html', form=OTPForm(), resent=True)
+
+    # --------- REGISTRATION ---------
+    elif context == 'register':
+        email = session.get('register_email')
+        if not email:
+            return render_template('register_email.html', form=EmailForm(), error="Session expired. Please start again.")
+
+        try:
+            limiter.limit("3 per minute", key_func=lambda: f"resend-register:{email}")(lambda: None)()
+        except RateLimitExceeded:
+            session['register_wait_until'] = (now + timedelta(minutes=1)).isoformat()
+            return render_template(
+                'register_details.html',
+                form=RegisterDetailsForm(),
+                email=email,
+                error="Too many OTP resends. Please wait before trying again.",
+                wait_seconds=60
+            )
+
+        class TempUser: pass
+        temp = TempUser()
+        temp.email = email
+        temp.username = email.split("@")[0]
+        session['register_otp'] = send_otp_email(
+            temp,
+            subject="Your New Registration OTP",
+            body_template="Your new OTP is: {code}\nIt expires in 5 minutes."
         )
-    )
-    try:
-        mail.send(msg)
-    except Exception as e:
-        flash("Failed to send email. Please try again later.", "danger")
-        return redirect(url_for('login'))
+        session['register_otp_expiry'] = (now + timedelta(minutes=1)).isoformat()
+        session['register_otp_attempts'] = 0
 
-    # redirect back with a flag
-    return redirect(url_for('two_factor', resent=1))
+        return render_template('register_details.html', form=RegisterDetailsForm(), email=email, resent=True)
 
-@app.route('/resend_register_otp')
-def resend_register_otp():
-    email = session.get('register_email')
-    if not email:
-        flash('Session expired. Please start again.', 'danger')
-        return redirect(url_for('register_email'))
+    # --------- PASSWORD RESET ---------
+    elif context == 'reset':
+        user_id = session.get('reset_user_id')
+        if not user_id:
+            return redirect(url_for('forgot_password'))
 
-    otp = f"{random.randint(0, 999999):06d}"
-    session['register_otp'] = otp
-    session['register_otp_expiry'] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
-    session['register_otp_attempts'] = 0
+        user = db.session.get(User, user_id)
 
-    msg = Message(
-        subject="Your New Registration OTP",
-        recipients=[email],
-        body=f"Your new OTP is: {otp}\nIt expires in 5 minutes."
-    )
-    try:
-        mail.send(msg)
-    except Exception as e:
-        flash("Failed to send email. Please try again later.", "danger")
-        return redirect(url_for('login'))
+        try:
+            limiter.limit("3 per minute", key_func=lambda: f"resend-reset:{user.email}")(lambda: None)()
+        except RateLimitExceeded:
+            session['reset_wait_until'] = (now + timedelta(minutes=1)).isoformat()
+            return render_template(
+                'reset_password.html',
+                form=ResetPasswordForm(),
+                error="Too many OTP resends. Please wait before trying again.",
+                wait_seconds=60
+            )
 
-    flash('A new OTP has been sent.', 'info')
-    return redirect(url_for('register_details'))
+        try:
+            send_otp_email(
+                user,
+                subject="Your New Reset Password OTP",
+                body_template="Hi {username},\n\nYour new OTP code is: {code}\nIt expires in 5 minutes."
+            )
+        except Exception:
+            return render_template('reset_password.html', form=ResetPasswordForm(), error="Failed to send email.")
 
-@app.route('/resend_reset_otp')
-def resend_reset_otp():
-    if 'reset_user_id' not in session:
-        return redirect(url_for('forgot_password'))
+        session['reset_otp_attempts'] = 0
+        return render_template('reset_password.html', form=ResetPasswordForm(), resent=True)
 
-    user = db.session.get(User, session['reset_user_id'])
+    # --------- INVALID CONTEXT ---------
+    return redirect(url_for('login'))
 
-    otp = f"{random.randint(0, 999999):06d}"
-    user.otp_code = otp
-    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-    db.session.commit()
-
-    session['reset_otp_attempts'] = 0
-
-    msg = Message(
-        subject="Your New Reset Password OTP",
-        recipients=[user.email],
-        body=f"Your new OTP code is: {otp}\nIt expires in 5 minutes."
-    )
-    try:
-        mail.send(msg)
-    except Exception as e:
-        flash("Failed to send email. Please try again later.", "danger")
-        return redirect(url_for('login'))
-
-    flash('A new OTP has been sent.', 'info')
-    return redirect(url_for('verify_reset_otp'))
 
 @app.route('/verify_reset_otp', methods=['GET', 'POST'])
 def verify_reset_otp():
