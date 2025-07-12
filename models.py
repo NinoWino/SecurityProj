@@ -20,8 +20,9 @@ class User(UserMixin, db.Model):
     otp_code           = db.Column(db.String(6), nullable=True)
     otp_expiry         = db.Column(db.DateTime, nullable=True)
     totp_secret = db.Column(db.String(32), nullable=True)
-    preferred_2fa = db.Column(db.String(10), default='email')  # 'email' or 'totp'
-
+    preferred_2fa = db.Column(db.String(10), default='email')
+    region_lock_enabled = db.Column(db.Boolean, default=False)
+    last_country = db.Column(db.String(64))
 
 class Role(db.Model):
     __tablename__ = 'roles'

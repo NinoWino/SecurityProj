@@ -218,7 +218,6 @@ def login():
         user = db.session.scalars(stmt).first()
 
         if user:
-            # Account lockout check
             if user.is_locked:
                 if user.last_failed_login and datetime.utcnow() - user.last_failed_login >= LOCK_DURATION:
                     user.failed_attempts = 0
@@ -229,14 +228,23 @@ def login():
                     return render_template('login.html', form=form, error=error)
 
             if check_password_hash(user.password, form.password.data):
+                location = get_location_data()
+                current_country = location.get('country')
+
+                if user.region_lock_enabled:
+                    if user.last_country and user.last_country != current_country:
+                        flash(f"Login blocked: region mismatch. Expected {user.last_country}, got {current_country}.", "danger")
+                        return redirect(url_for('login'))
+                    elif not user.last_country:
+                        user.last_country = current_country
+                        db.session.commit()
+
                 if user.preferred_2fa == 'totp' and user.totp_secret:
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor_totp'))
 
                 if user.two_factor_enabled:
                     session['pre_2fa_user_id'] = user.id
-
-                    # fallback to email
                     code = f"{random.randint(0, 999999):06d}"
                     user.otp_code = code
                     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
@@ -245,21 +253,18 @@ def login():
                     msg = Message(
                         subject="Your One-Time Login Code",
                         recipients=[user.email],
-                        body=f"Hello {user.username},\n\nYour login code is: {code}\n\nIt expires in 5 minutes."
+                        body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
                     )
                     mail.send(msg)
                     return redirect(url_for('two_factor'))
 
-                # ✅ No 2FA → complete login and notify
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
                 user.failed_attempts = 0
                 db.session.commit()
-
-                send_login_alert_email(user)  # move into helper
+                send_login_alert_email(user)
                 return redirect(url_for('profile'))
 
-            # Password incorrect
             user.failed_attempts += 1
             user.last_failed_login = datetime.utcnow()
             if user.failed_attempts >= MAX_ATTEMPTS:
@@ -270,6 +275,7 @@ def login():
             error = 'Email not found.'
 
     return render_template('login.html', form=form, error=error, message=request.args.get('message'))
+
 
 @app.route('/login/google')
 def login_google():
@@ -298,20 +304,34 @@ def auth_callback():
     user = db.session.scalars(stmt).first()
 
     if not user:
-        # Auto-register the user with default 'user' role
         user = User(
             username=user_info.get('name') or email.split('@')[0],
             email=email,
-            password=generate_password_hash(os.urandom(16).hex()),  # Random unusable password
-            role_id=1  # Default to 'user' role
+            password=generate_password_hash(os.urandom(16).hex()),  # Unusable random password
+            role_id=1  # Default to 'user'
         )
         db.session.add(user)
         db.session.commit()
 
+    location = get_location_data()
+    country = location.get('country')
+
+    if user.region_lock_enabled:
+        if user.last_country and user.last_country != country:
+            flash(f"Login blocked: region mismatch. Expected {user.last_country}, got {country}.", "danger")
+            return redirect(url_for('login'))
+        elif not user.last_country:
+            user.last_country = country
+            db.session.commit()
+
+    # ✅ Finalize login
     login_user(user)
     session['last_active'] = datetime.utcnow().isoformat()
 
+    send_login_alert_email(user)
+
     return redirect(url_for('profile'))
+
 
 
 @app.route('/logout')
@@ -681,12 +701,20 @@ def fallback_to_email_otp():
 
     return redirect(url_for('two_factor', resent=1))
 
-
 @app.route('/security')
 @login_required
 def security():
     toggle_form = Toggle2FAForm()
     return render_template('security.html', toggle_form=toggle_form)
+
+@app.route('/toggle_region_lock', methods=['POST'])
+@login_required
+def toggle_region_lock():
+    current_user.region_lock_enabled = not current_user.region_lock_enabled
+    db.session.commit()
+    flash(f"Region lock {'enabled' if current_user.region_lock_enabled else 'disabled'}.", "info")
+    return redirect(url_for('security'))
+
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
