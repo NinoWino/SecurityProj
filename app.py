@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 from flask_login import (
@@ -7,15 +7,14 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
 from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
-import os
+import os, requests, pyotp, qrcode, io
 from dotenv import load_dotenv
-import requests
 from user_agents import parse as parse_ua
 from pytz import timezone
 
@@ -102,7 +101,7 @@ def get_public_ip():
     except Exception:
         return '127.0.0.1'  # fallback
 
-def get_location_data(_unused_local_ip=None):
+def get_location_data(_unused=None):
     ip = get_public_ip()
     try:
         res = requests.get(f'https://ipwhois.app/json/{ip}', timeout=3)
@@ -111,15 +110,34 @@ def get_location_data(_unused_local_ip=None):
             'ip': ip,
             'city': data.get('city', 'Unknown'),
             'region': data.get('region', 'Unknown'),
-            'country': data.get('country', 'Unknown')
+            'country': data.get('country', 'Unknown'),
+            'asn': data.get('asn', 'Unknown'),
+            'org': data.get('org', 'Unknown'),
+            'isp': data.get('isp', 'Unknown'),
+            'domain': data.get('domain', 'Unknown'),
+            'anonymous': data.get('security', {}).get('anonymous', False),
+            'proxy': data.get('security', {}).get('proxy', False),
+            'vpn': data.get('security', {}).get('vpn', False),
+            'tor': data.get('security', {}).get('tor', False),
+            'hosting': data.get('security', {}).get('hosting', False)
         }
     except Exception:
         return {
             'ip': ip,
             'city': 'Unknown',
             'region': 'Unknown',
-            'country': 'Unknown'
+            'country': 'Unknown',
+            'asn': 'Unknown',
+            'org': 'Unknown',
+            'isp': 'Unknown',
+            'domain': 'Unknown',
+            'anonymous': False,
+            'proxy': False,
+            'vpn': False,
+            'tor': False,
+            'hosting': False
         }
+
 
 
 def get_device_info(user_agent_string):
@@ -139,6 +157,7 @@ def check_session_timeout():
                 session.clear()
                 return redirect(url_for('login', message='timeout'))
         session['last_active'] = now.isoformat()
+
 def send_login_alert_email(user):
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     ua_string = request.headers.get('User-Agent', '')
@@ -154,9 +173,18 @@ def send_login_alert_email(user):
             f"A new login to your account was detected:\n\n"
             f"📍 IP Address: {location['ip']}\n"
             f"🌍 Location: {location['city']}, {location['region']}, {location['country']}\n"
+            f"🔌 ISP: {location['isp']}\n"
+            f"🏢 Organization: {location['org']}\n"
+            f"🌐 Domain: {location['domain']}\n"
+            f"📡 ASN: {location['asn']}\n\n"
             f"💻 Device: {device_info}\n"
             f"🕒 Time: {sg_time.strftime('%Y-%m-%d %H:%M:%S')} SGT\n\n"
-            "If this wasn’t you, please reset your password or contact support."
+            f"🛡️ Network Anonymity:\n"
+            f"  - VPN: {'Yes' if location['vpn'] else 'No'}\n"
+            f"  - Proxy: {'Yes' if location['proxy'] else 'No'}\n"
+            f"  - Tor: {'Yes' if location['tor'] else 'No'}\n"
+            f"  - Hosting Provider: {'Yes' if location['hosting'] else 'No'}\n\n"
+            "If this wasn’t you, please reset your password or contact support immediately."
         )
     )
     mail.send(msg)
@@ -171,12 +199,10 @@ def send_login_alert_email(user):
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-
-# Routes
 @app.route('/')
 def home():
     return render_template('home.html')
-
+# LOGIN
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
@@ -203,7 +229,14 @@ def login():
                     return render_template('login.html', form=form, error=error)
 
             if check_password_hash(user.password, form.password.data):
+                if user.preferred_2fa == 'totp' and user.totp_secret:
+                    session['pre_2fa_user_id'] = user.id
+                    return redirect(url_for('two_factor_totp'))
+
                 if user.two_factor_enabled:
+                    session['pre_2fa_user_id'] = user.id
+
+                    # fallback to email
                     code = f"{random.randint(0, 999999):06d}"
                     user.otp_code = code
                     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
@@ -215,8 +248,6 @@ def login():
                         body=f"Hello {user.username},\n\nYour login code is: {code}\n\nIt expires in 5 minutes."
                     )
                     mail.send(msg)
-
-                    session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor'))
 
                 # ✅ No 2FA → complete login and notify
@@ -315,14 +346,54 @@ def change_password():
 
     return render_template('change_password.html', form=form, error=error)
 
+@app.route('/forgot_password', methods=['GET', 'POST'])
+def forgot_password():
+    if current_user.is_authenticated:
+        return redirect(url_for('profile'))
+
+    form = ForgotPasswordForm()
+    error = None
+
+    if form.validate_on_submit():
+        stmt = select(User).filter_by(email=form.email.data)
+        user = db.session.scalars(stmt).first()
+        if user:
+            code = f"{random.randint(0, 999999):06d}"
+            user.otp_code = code
+            user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+            db.session.commit()
+
+            msg = Message(
+                subject="Reset Password Code",
+                recipients=[user.email],
+                body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
+            )
+            mail.send(msg)
+            session['reset_user_id'] = user.id
+            return redirect(url_for('verify_reset_otp'))
+        else:
+            error = "Email not found."
+
+    return render_template('forgot_password.html', form=form, error=error)
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# 2FA ROUTES
 @app.route('/toggle_2fa', methods=['POST'])
 @login_required
 def toggle_2fa():
     form = Toggle2FAForm()
     if form.validate_on_submit():
-        current_user.two_factor_enabled = not current_user.two_factor_enabled
+        if current_user.two_factor_enabled:
+            current_user.two_factor_enabled = False
+        else:
+            current_user.two_factor_enabled = True
+            current_user.preferred_2fa = 'email'
+            current_user.totp_secret = None  # ✅ disable authenticator app
         db.session.commit()
     return redirect(url_for('security'))
+
 
 @app.route('/two_factor', methods=['GET', 'POST'])
 def two_factor():
@@ -439,37 +510,6 @@ def resend_reset_otp():
     flash('A new OTP has been sent.', 'info')
     return redirect(url_for('verify_reset_otp'))
 
-
-@app.route('/forgot_password', methods=['GET', 'POST'])
-def forgot_password():
-    if current_user.is_authenticated:
-        return redirect(url_for('profile'))
-
-    form = ForgotPasswordForm()
-    error = None
-
-    if form.validate_on_submit():
-        stmt = select(User).filter_by(email=form.email.data)
-        user = db.session.scalars(stmt).first()
-        if user:
-            code = f"{random.randint(0, 999999):06d}"
-            user.otp_code = code
-            user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-            db.session.commit()
-
-            msg = Message(
-                subject="Reset Password Code",
-                recipients=[user.email],
-                body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
-            )
-            mail.send(msg)
-            session['reset_user_id'] = user.id
-            return redirect(url_for('verify_reset_otp'))
-        else:
-            error = "Email not found."
-
-    return render_template('forgot_password.html', form=form, error=error)
-
 @app.route('/verify_reset_otp', methods=['GET', 'POST'])
 def verify_reset_otp():
     if 'reset_user_id' not in session:
@@ -503,6 +543,144 @@ def verify_reset_otp():
             return redirect(url_for('login', message='pw_changed'))
 
     return render_template('reset_password.html', form=form, error=error)
+
+@app.route('/setup_totp')
+@login_required
+def setup_totp():
+    if not current_user.totp_secret:
+        current_user.totp_secret = pyotp.random_base32()
+        db.session.commit()
+
+    otp_uri = pyotp.totp.TOTP(current_user.totp_secret).provisioning_uri(
+        name=current_user.email,
+        issuer_name="MySecureApp"
+    )
+    img = qrcode.make(otp_uri)
+    buf = io.BytesIO()
+    img.save(buf)
+    buf.seek(0)
+    return send_file(buf, mimetype='image/png')
+
+@app.route('/authenticator/setup', methods=['GET', 'POST'])
+@login_required
+def setup_authenticator():
+    step = request.form.get('step') or '1'
+    form = VerifyTOTPForm()
+    error = None
+
+    if not current_user.totp_secret:
+        current_user.totp_secret = pyotp.random_base32()
+        db.session.commit()
+
+    if step == 'verify' and form.validate_on_submit():
+        totp = pyotp.TOTP(current_user.totp_secret)
+        if totp.verify(form.token.data.strip()):
+            current_user.preferred_2fa = 'totp'
+            current_user.two_factor_enabled = False
+            db.session.commit()
+            return render_template('setup_authenticator.html', step='done')
+        else:
+            error = "Invalid code. Try again."
+            step = '3'
+
+    manual_key = current_user.totp_secret
+    return render_template(
+        'setup_authenticator.html',
+        step=step,
+        manual_key=manual_key,
+        form=form,
+        error=error
+    )
+
+@app.route('/two_factor_totp', methods=['GET', 'POST'])
+def two_factor_totp():
+    form = OTPForm()
+    error = None
+
+    user_id = session.get('pre_2fa_user_id')
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    totp = pyotp.TOTP(user.totp_secret)
+
+    # Lockout after 3 failed attempts
+    attempts = session.get('totp_otp_attempts', 0)
+    if attempts >= 3:
+        flash('Too many failed attempts. Please log in again.', 'danger')
+        session.pop('pre_2fa_user_id', None)
+        session.pop('totp_otp_attempts', None)
+        return redirect(url_for('login'))
+
+    if form.validate_on_submit():
+        token = form.token.data.strip()
+        if totp.verify(token):
+            login_user(user)
+            session.pop('pre_2fa_user_id', None)
+            session.pop('totp_otp_attempts', None)
+            session['last_active'] = datetime.utcnow().isoformat()
+            user.failed_attempts = 0
+            user.otp_code = None
+            user.otp_expiry = None
+            db.session.commit()
+            send_login_alert_email(user)
+            return redirect(url_for('profile'))
+        else:
+            session['totp_otp_attempts'] = attempts + 1
+            error = 'Invalid code. Please try again.'
+
+    return render_template('two_factor_totp.html', form=form, error=error)
+
+
+@app.route('/authenticator/start')
+@login_required
+def start_totp_setup():
+    import pyotp
+    if not current_user.totp_secret:
+        current_user.totp_secret = pyotp.random_base32()
+        db.session.commit()
+    return redirect(url_for('setup_authenticator'))
+
+
+@app.route('/authenticator/disable')
+@login_required
+def disable_totp():
+    current_user.totp_secret = None
+    current_user.preferred_2fa = 'email'
+    db.session.commit()
+    flash("Authenticator App has been disabled.", "info")
+    return redirect(url_for('security'))
+
+@app.route('/fallback_to_email_otp')
+def fallback_to_email_otp():
+    user_id = session.get('pre_2fa_user_id')
+    if not user_id:
+        flash("Session expired. Please log in again.", "danger")
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+
+    # Generate email OTP
+    code = f"{random.randint(0, 999999):06d}"
+    user.otp_code = code
+    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+    db.session.commit()
+
+    msg = Message(
+        subject="Backup Login Code",
+        recipients=[user.email],
+        body=(
+            f"Hi {user.username},\n\n"
+            f"You requested a backup login code.\n\n"
+            f"Your OTP is: {code}\n"
+            f"It expires in 5 minutes.\n\n"
+            f"If you didn't request this, please secure your account."
+        )
+    )
+    mail.send(msg)
+
+    return redirect(url_for('two_factor', resent=1))
+
 
 @app.route('/security')
 @login_required

@@ -19,6 +19,9 @@ class User(UserMixin, db.Model):
     two_factor_enabled = db.Column(db.Boolean, default=True)
     otp_code           = db.Column(db.String(6), nullable=True)
     otp_expiry         = db.Column(db.DateTime, nullable=True)
+    totp_secret = db.Column(db.String(32), nullable=True)
+    preferred_2fa = db.Column(db.String(10), default='email')  # 'email' or 'totp'
+
 
 class Role(db.Model):
     __tablename__ = 'roles'
