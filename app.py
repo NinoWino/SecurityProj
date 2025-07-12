@@ -84,6 +84,10 @@ login_manager.login_view = 'login'
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+    return render_template('error.html', message="An unexpected error occurred."), 500
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -187,7 +191,11 @@ def send_login_alert_email(user):
             "If this wasn’t you, please reset your password or contact support immediately."
         )
     )
-    mail.send(msg)
+    try:
+        mail.send(msg)
+    except Exception as e:
+        flash("Failed to send email. Please try again later.", "danger")
+        return redirect(url_for('login'))
 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -257,7 +265,12 @@ def login():
                         recipients=[user.email],
                         body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
                     )
-                    mail.send(msg)
+                    try:
+                        mail.send(msg)
+                    except Exception as e:
+                        flash("Failed to send email. Please try again later.", "danger")
+                        return redirect(url_for('login'))
+
                     return redirect(url_for('two_factor'))
 
                 login_user(user)
@@ -306,14 +319,19 @@ def auth_callback():
     user = db.session.scalars(stmt).first()
 
     if not user:
-        user = User(
-            username=user_info.get('name') or email.split('@')[0],
-            email=email,
-            password=generate_password_hash(os.urandom(16).hex()),  # Unusable random password
-            role_id=1  # Default to 'user'
-        )
-        db.session.add(user)
-        db.session.commit()
+        try:
+            user = User(
+                username=user_info.get('name') or email.split('@')[0],
+                email=email,
+                password=generate_password_hash(os.urandom(16).hex()),
+                role_id=1
+            )
+            db.session.add(user)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash("Account creation via Google failed.", "danger")
+            return redirect(url_for('login'))
 
     location = get_location_data()
     country = location.get('country')
@@ -390,7 +408,12 @@ def forgot_password():
                 recipients=[user.email],
                 body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
             )
-            mail.send(msg)
+            try:
+                mail.send(msg)
+            except Exception as e:
+                flash("Failed to send email. Please try again later.", "danger")
+                return redirect(url_for('login'))
+
             session['reset_user_id'] = user.id
             return redirect(url_for('verify_reset_otp'))
         else:
@@ -481,7 +504,11 @@ def resend_code():
             "It expires in 5 minutes."
         )
     )
-    mail.send(msg)
+    try:
+        mail.send(msg)
+    except Exception as e:
+        flash("Failed to send email. Please try again later.", "danger")
+        return redirect(url_for('login'))
 
     # redirect back with a flag
     return redirect(url_for('two_factor', resent=1))
@@ -503,7 +530,11 @@ def resend_register_otp():
         recipients=[email],
         body=f"Your new OTP is: {otp}\nIt expires in 5 minutes."
     )
-    mail.send(msg)
+    try:
+        mail.send(msg)
+    except Exception as e:
+        flash("Failed to send email. Please try again later.", "danger")
+        return redirect(url_for('login'))
 
     flash('A new OTP has been sent.', 'info')
     return redirect(url_for('register_details'))
@@ -527,7 +558,11 @@ def resend_reset_otp():
         recipients=[user.email],
         body=f"Your new OTP code is: {otp}\nIt expires in 5 minutes."
     )
-    mail.send(msg)
+    try:
+        mail.send(msg)
+    except Exception as e:
+        flash("Failed to send email. Please try again later.", "danger")
+        return redirect(url_for('login'))
 
     flash('A new OTP has been sent.', 'info')
     return redirect(url_for('verify_reset_otp'))
@@ -701,7 +736,11 @@ def fallback_to_email_otp():
             f"If you didn't request this, please secure your account."
         )
     )
-    mail.send(msg)
+    try:
+        mail.send(msg)
+    except Exception as e:
+        flash("Failed to send email. Please try again later.", "danger")
+        return redirect(url_for('login'))
 
     return redirect(url_for('two_factor', resent=1))
 
@@ -752,7 +791,11 @@ def register_email():
             recipients=[email],
             body=f"Your OTP is: {otp}\nIt expires in 5 minutes."
         )
-        mail.send(msg)
+        try:
+            mail.send(msg)
+        except Exception as e:
+            flash("Failed to send email. Please try again later.", "danger")
+            return redirect(url_for('login'))
 
         flash('OTP sent to your email.', 'info')
         return redirect(url_for('register_details'))

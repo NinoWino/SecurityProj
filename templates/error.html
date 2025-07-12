@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-5 text-center">
+  <h2>Oops!</h2>
+  <p>{{ message }}</p>
+  <a href="{{ url_for('home') }}" class="btn btn-primary mt-3">Back to Home</a>
+</div>
+{% endblock %}
