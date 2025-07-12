@@ -210,7 +210,7 @@ def login():
 
     form = LoginForm()
     error = None
-    LOCK_DURATION = timedelta(seconds=20)
+    LOCK_DURATION = timedelta(seconds=60)
     MAX_ATTEMPTS = 3
 
     if form.validate_on_submit():
@@ -224,8 +224,10 @@ def login():
                     user.is_locked = False
                     db.session.commit()
                 else:
-                    error = "Account locked. Please try again later."
-                    return render_template('login.html', form=form, error=error)
+                    remaining = LOCK_DURATION - (datetime.utcnow() - user.last_failed_login)
+                    seconds_left = max(0, int(remaining.total_seconds()))
+                    return render_template('login.html', form=form, error="Account locked. Please try again later.",
+                                           lockout_seconds=seconds_left)
 
             if check_password_hash(user.password, form.password.data):
                 location = get_location_data()
@@ -581,36 +583,42 @@ def setup_totp():
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
 
-@app.route('/authenticator/setup', methods=['GET', 'POST'])
+@app.route('/authenticator/setup/start')
 @login_required
-def setup_authenticator():
-    step = request.form.get('step') or '1'
-    form = VerifyTOTPForm()
-    error = None
+def setup_totp_step1():
+    return render_template('setup_authenticator.html', step='1')
 
+@app.route('/authenticator/setup/qr')
+@login_required
+def setup_totp_step2():
     if not current_user.totp_secret:
         current_user.totp_secret = pyotp.random_base32()
         db.session.commit()
+    return render_template('setup_authenticator.html', step='2', manual_key=current_user.totp_secret)
 
-    if step == 'verify' and form.validate_on_submit():
+@app.route('/authenticator/setup/verify', methods=['GET', 'POST'])
+@login_required
+def setup_totp_step3():
+    form = VerifyTOTPForm()
+    error = None
+
+    if request.method == 'POST' and form.validate_on_submit():
         totp = pyotp.TOTP(current_user.totp_secret)
         if totp.verify(form.token.data.strip()):
             current_user.preferred_2fa = 'totp'
             current_user.two_factor_enabled = False
             db.session.commit()
-            return render_template('setup_authenticator.html', step='done')
+            return redirect(url_for('setup_totp_done'))
         else:
             error = "Invalid code. Try again."
-            step = '3'
 
-    manual_key = current_user.totp_secret
-    return render_template(
-        'setup_authenticator.html',
-        step=step,
-        manual_key=manual_key,
-        form=form,
-        error=error
-    )
+    return render_template('setup_authenticator.html', step='3', form=form, error=error)
+
+@app.route('/authenticator/setup/done')
+@login_required
+def setup_totp_done():
+    return render_template('setup_authenticator.html', step='done')
+
 
 @app.route('/two_factor_totp', methods=['GET', 'POST'])
 def two_factor_totp():
@@ -655,11 +663,7 @@ def two_factor_totp():
 @app.route('/authenticator/start')
 @login_required
 def start_totp_setup():
-    import pyotp
-    if not current_user.totp_secret:
-        current_user.totp_secret = pyotp.random_base32()
-        db.session.commit()
-    return redirect(url_for('setup_authenticator'))
+    return redirect(url_for('setup_totp_step1'))
 
 
 @app.route('/authenticator/disable')

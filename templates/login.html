@@ -39,7 +39,21 @@
       {% if error %}
         <div class="alert alert-danger mt-3">{{ error }}</div>
       {% endif %}
+      {% if lockout_seconds %}
+        <div class="alert alert-warning mt-2 text-center">
+          Try again in <span id="lockout-timer">{{ lockout_seconds }}</span> seconds.
+        </div>
+        <script>
+          const timerEl = document.getElementById("lockout-timer");
+          let remaining = parseInt(timerEl.innerText);
 
+          const countdown = setInterval(() => {
+            remaining -= 1;
+            timerEl.innerText = remaining;
+            if (remaining <= 0) clearInterval(countdown);
+          }, 1000);
+        </script>
+      {% endif %}
       {% if message == 'logged_out' %}
         <div class="alert alert-info mt-3">You have been logged out.</div>
       {% elif message == 'timeout' %}
