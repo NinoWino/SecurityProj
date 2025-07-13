@@ -250,8 +250,12 @@ def login():
     MAX_ATTEMPTS = 3
 
     if form.validate_on_submit():
-        stmt = select(User).filter_by(email=form.email.data)
+        stmt = select(User).filter_by(email=form.email.data.strip().lower())
         user = db.session.scalars(stmt).first()
+
+        if user and user.signup_method.lower() != 'email':
+            flash(f"This account was created using {user.signup_method.capitalize()}. Please use that login method.", "warning")
+            return redirect(url_for('login'))
 
         if user:
             if user.is_locked:
@@ -295,7 +299,7 @@ def login():
                     )
                     try:
                         mail.send(msg)
-                    except Exception as e:
+                    except Exception:
                         flash("Failed to send email. Please try again later.", "danger")
                         return redirect(url_for('login'))
 
@@ -318,6 +322,7 @@ def login():
             error = 'Email not found.'
 
     return render_template('login.html', form=form, error=error, message=request.args.get('message'))
+
 
 
 @app.route('/login/google')
@@ -346,13 +351,18 @@ def auth_callback():
     stmt = select(User).filter_by(email=email)
     user = db.session.scalars(stmt).first()
 
+    if user and user.signup_method.lower() != 'google':
+        flash(f"This email is registered {user.signup_method.capitalize()}. Please use the correct login option.", "warning")
+        return redirect(url_for('login'))
+
     if not user:
         try:
             user = User(
                 username=user_info.get('name') or email.split('@')[0],
                 email=email,
                 password=generate_password_hash(os.urandom(16).hex()),
-                role_id=1
+                role_id=1,
+                signup_method = 'google'
             )
             db.session.add(user)
             db.session.commit()
@@ -907,7 +917,8 @@ def register_details():
             username=form.username.data.strip(),
             email=email,
             password=generate_password_hash(form.password.data),
-            role_id=1
+            role_id=1,
+            signup_method = 'email'
         )
         db.session.add(new_user)
         db.session.commit()

@@ -23,6 +23,7 @@ class User(UserMixin, db.Model):
     preferred_2fa = db.Column(db.String(10), default='email')
     region_lock_enabled = db.Column(db.Boolean, default=False)
     last_country = db.Column(db.String(64))
+    signup_method = db.Column(db.String(20), nullable=False, default='email')
 
 class Role(db.Model):
     __tablename__ = 'roles'
