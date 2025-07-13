@@ -4,8 +4,23 @@ from wtforms.validators import DataRequired, Email, EqualTo, Length ,ValidationE
 from flask_wtf.recaptcha import RecaptchaField
 from wtforms import ValidationError
 from flask_login import current_user
+from zxcvbn import zxcvbn
+import hashlib
+import requests
 
-# ✅ Existing Forms
+def validate_pwned_password(field):
+    sha1 = hashlib.sha1(field.data.encode('utf-8')).hexdigest().upper()
+    prefix, suffix = sha1[:5], sha1[5:]
+
+    try:
+        response = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}")
+        if response.status_code != 200:
+            raise ValidationError("Password breach check failed. Please try again.")
+        hashes = (line.split(':') for line in response.text.splitlines())
+        if any(s == suffix for s, _ in hashes):
+            raise ValidationError("This password has been found in known data breaches. Please use a different one.")
+    except requests.RequestException:
+        raise ValidationError("Could not check password breach status. Try again later.")
 
 class LoginForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Email()])
@@ -31,6 +46,12 @@ class ChangePasswordForm(FlaskForm):
     )
     submit = SubmitField('Change Password')
 
+    def validate_new_password(self, field):
+        result = zxcvbn(field.data)
+        if result['score'] < 3:
+            raise ValidationError("Password is too weak. Use at least 8 characters, with uppercase, lowercase, numbers, and symbols.")
+        validate_pwned_password(field)
+
 class OTPForm(FlaskForm):
     token = StringField(
         'Enter 6-digit code',
@@ -53,6 +74,13 @@ class ResetPasswordForm(FlaskForm):
         validators=[DataRequired(), EqualTo('new_password', message='Passwords must match')]
     )
     submit = SubmitField('Reset Password')
+
+    def validate_new_password(self, field):
+        result = zxcvbn(field.data)
+        if result['score'] < 3:
+            raise ValidationError(
+                "Password is too weak. Use at least 8 characters, with uppercase, lowercase, numbers, and symbols.")
+        validate_pwned_password(field)
 
 # ✅ Original RegisterForm (used in old /register route, now deprecated)
 class RegisterForm(FlaskForm):
@@ -118,6 +146,12 @@ class RegisterDetailsForm(FlaskForm):
 
     submit = SubmitField('Register')
 
+
+    def validate_password(self, field):
+        result = zxcvbn(field.data)
+        if result['score'] < 3:
+            raise ValidationError("Password is too weak. Use at least 8 characters, with uppercase, lowercase, numbers, and symbols.")
+        validate_pwned_password(field)
     def validate_phone(self, field):
         from models import User
         if User.query.filter_by(phone=field.data.strip()).first():
@@ -143,3 +177,35 @@ class ChangeEmailForm(FlaskForm):
 
 class DeleteAccountForm(FlaskForm):
     submit = SubmitField('Delete Account')
+
+class ChangeUsernameForm(FlaskForm):
+    new_username = StringField('New Username', validators=[
+        DataRequired(),
+        Length(min=3, max=25, message="Username must be 3–25 characters.")
+    ])
+    submit = SubmitField('Change Username')
+
+    def validate_new_username(self, field):
+        from models import User
+        user = User.query.filter_by(username=field.data.strip()).first()
+        if user and user.id != current_user.id:
+            raise ValidationError('Username is already taken.')
+
+class ForcePasswordResetForm(FlaskForm):
+    old_password = PasswordField('Current Password', validators=[DataRequired()])
+    new_password = PasswordField('New Password', validators=[
+        DataRequired(),
+        Length(min=8, message='Password must be at least 8 characters.')
+    ])
+    confirm_password = PasswordField('Confirm Password', validators=[
+        DataRequired(),
+        EqualTo('new_password', message='Passwords must match')
+    ])
+    submit = SubmitField('Update Password')
+
+    def validate_new_password(self, field):
+        result = zxcvbn(field.data)
+        if result['score'] < 3:
+            raise ValidationError(
+                "Password is too weak. Use at least 8 characters, with uppercase, lowercase, numbers, and symbols.")
+        validate_pwned_password(field)

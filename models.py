@@ -1,5 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
+from sqlalchemy import PickleType, DateTime
+from datetime import datetime
 
 db = SQLAlchemy()
 
@@ -29,3 +31,7 @@ class User(UserMixin, db.Model):
     two_factor_enabled = db.Column(db.Boolean, default=True)
     otp_code = db.Column(db.String(6), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
+
+    password_history = db.Column(PickleType, default=list)
+    password_last_changed = db.Column(DateTime, default=datetime.utcnow)
+

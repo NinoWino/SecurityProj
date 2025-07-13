@@ -176,6 +176,12 @@ def login():
 
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor'))
+                # ==== change password expire time ====
+                if user.password_last_changed and datetime.utcnow() > user.password_last_changed + timedelta(days=90):
+                    logout_user()
+                    session.clear()
+                    session['expired_user_id'] = user.id
+                    return redirect(url_for('force_password_reset'))
 
                 # No 2FA: complete login
                 login_user(user)
@@ -720,4 +726,39 @@ if __name__ == '__main__':
     app.run(debug=True)
 
 
+@app.route('/force_password_reset', methods=['GET', 'POST'])
+def force_password_reset():
+    from forms import ForcePasswordResetForm
+    form = ForcePasswordResetForm()
+    user_id = session.get('expired_user_id')
+
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    error = None
+
+    if form.validate_on_submit():
+        from werkzeug.security import generate_password_hash, check_password_hash
+
+        if not check_password_hash(user.password, form.old_password.data):
+            error = 'Current password is incorrect.'
+        elif check_password_hash(user.password, form.new_password.data):
+            error = 'New password must be different from the old password.'
+        elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
+            error = 'You cannot reuse one of your last 3 passwords.'
+        else:
+            new_hash = generate_password_hash(form.new_password.data)
+            user.password = new_hash
+            user.password_last_changed = datetime.utcnow()
+            user.password_history.append(new_hash)
+            if len(user.password_history) > 3:
+                user.password_history = user.password_history[-3:]
+
+            db.session.commit()
+            session.pop('expired_user_id', None)
+            flash('Password updated successfully. Please log in.', 'success')
+            return redirect(url_for('login'))
+
+    return render_template('force_password_reset.html', form=form, error=error)
 
