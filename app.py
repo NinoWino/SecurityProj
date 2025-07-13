@@ -214,7 +214,7 @@ def send_otp_email(user, subject, body_template):
     import random
 
     code = f"{random.randint(0, 999999):06d}"
-    user.otp_code = code
+    user.otp_code = generate_password_hash(code)
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     db.session.commit()
 
@@ -288,7 +288,7 @@ def login():
                 if user.two_factor_enabled:
                     session['pre_2fa_user_id'] = user.id
                     code = f"{random.randint(0, 999999):06d}"
-                    user.otp_code = code
+                    user.otp_code = generate_password_hash(code)
                     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
                     db.session.commit()
 
@@ -455,7 +455,7 @@ def forgot_password():
 
         if user:
             code = f"{random.randint(0, 999999):06d}"
-            user.otp_code = code
+            user.otp_code = generate_password_hash(code)
             user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
             db.session.commit()
 
@@ -521,7 +521,7 @@ def two_factor():
         if not user.otp_expiry or datetime.utcnow() > user.otp_expiry:
             error = 'Code expired. Please log in again.'
             session.pop('pre_2fa_user_id', None)
-        elif token != user.otp_code:
+        elif not check_password_hash(user.otp_code, token):
             session['login_otp_attempts'] = attempts + 1
             error = 'Invalid code. Please try again.'
         else:
@@ -659,7 +659,7 @@ def verify_reset_otp():
     if form.validate_on_submit():
         if datetime.utcnow() > user.otp_expiry:
             error = "OTP expired."
-        elif form.otp.data != user.otp_code:
+        elif not check_password_hash(user.otp_code, form.otp.data.strip()):
             session['reset_otp_attempts'] = attempts + 1
             error = "Invalid OTP."
         elif check_password_hash(user.password, form.new_password.data):
@@ -795,7 +795,7 @@ def fallback_to_email_otp():
 
     # Generate email OTP
     code = f"{random.randint(0, 999999):06d}"
-    user.otp_code = code
+    user.otp_code = generate_password_hash(code)
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     db.session.commit()
 
@@ -828,8 +828,19 @@ def security():
 @login_required
 def toggle_region_lock():
     current_user.region_lock_enabled = not current_user.region_lock_enabled
+
+    message = ""
+    if current_user.region_lock_enabled:
+        location = get_location_data()
+        country = location.get('country', 'Unknown')
+        if not current_user.last_country:
+            current_user.last_country = country
+        message = f"Region lock enabled. You can now only log in from {current_user.last_country}."
+    else:
+        message = "Region lock disabled."
+
     db.session.commit()
-    flash(f"Region lock {'enabled' if current_user.region_lock_enabled else 'disabled'}.", "info")
+    flash(message, "info")
     return redirect(url_for('security'))
 
 
@@ -856,7 +867,7 @@ def register_email():
 
         otp = f"{random.randint(0, 999999):06d}"
         session['register_email'] = email
-        session['register_otp'] = otp
+        session['register_otp_hash'] = generate_password_hash(otp)  # ✅ hash OTP
         session['register_otp_expiry'] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
         session['register_otp_attempts'] = 0
 
@@ -881,11 +892,11 @@ def register_email():
 def register_details():
     form = RegisterDetailsForm()
     email = session.get('register_email')
-    otp = session.get('register_otp')
+    otp_hash = session.get('register_otp_hash')  # stored hash instead of raw OTP
     expiry_str = session.get('register_otp_expiry')
     attempts = session.get('register_otp_attempts', 0)
 
-    if not email or not otp or not expiry_str:
+    if not email or not otp_hash or not expiry_str:
         flash('Session expired. Start again.', 'danger')
         return redirect(url_for('register_email'))
 
@@ -904,7 +915,7 @@ def register_details():
             session.clear()
             return redirect(url_for('register_email'))
 
-        if otp_input != otp:
+        if not check_password_hash(otp_hash, otp_input):
             session['register_otp_attempts'] = attempts + 1
             flash('Invalid OTP.', 'danger')
             return render_template('register_details.html', form=form, email=email)
@@ -918,7 +929,7 @@ def register_details():
             email=email,
             password=generate_password_hash(form.password.data),
             role_id=1,
-            signup_method = 'email'
+            signup_method='email'
         )
         db.session.add(new_user)
         db.session.commit()
@@ -928,6 +939,7 @@ def register_details():
         return redirect(url_for('login'))
 
     return render_template('register_details.html', form=form, email=email)
+
 
 
 
