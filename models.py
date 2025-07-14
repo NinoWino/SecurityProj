@@ -17,7 +17,7 @@ class User(UserMixin, db.Model):
     last_failed_login  = db.Column(db.DateTime, nullable=True)
     is_locked          = db.Column(db.Boolean, default=False)
     two_factor_enabled = db.Column(db.Boolean, default=True)
-    otp_code           = db.Column(db.String(6), nullable=True)
+    otp_code           = db.Column(db.String(255), nullable=True)
     otp_expiry         = db.Column(db.DateTime, nullable=True)
     totp_secret = db.Column(db.String(32), nullable=True)
     preferred_2fa = db.Column(db.String(10), default='email')
