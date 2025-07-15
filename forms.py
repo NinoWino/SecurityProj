@@ -92,7 +92,7 @@ class EmailForm(FlaskForm):
     submit = SubmitField('Next')
 
 class RegisterDetailsForm(FlaskForm):
-    otp = StringField('OTP', validators=[DataRequired(), Length(min=6, max=6)])  # placeholder, implement verification later
+    otp = StringField('OTP', validators=[DataRequired(), Length(min=6, max=6)])
     username = StringField('Username', validators=[
         DataRequired(),
         Length(min=3, max=25, message="Username must be 3-25 characters.")
