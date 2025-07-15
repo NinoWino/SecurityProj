@@ -872,6 +872,16 @@ def register_email():
     form = EmailForm()
 
     if form.validate_on_submit():
+        error, wait = enforce_rate_limit(
+            "3 per minute",
+            key_prefix=f"register_email:{request.remote_addr}",
+            error_message="Too many registration attempts. Please wait before trying again.",
+            wait_seconds=60
+        )
+        if error:
+            session['register_wait_until'] = (datetime.utcnow() + timedelta(seconds=wait)).isoformat()
+            return render_template('register_email.html', form=form, error=error, wait_seconds=wait)
+
         email = form.email.data.strip()
 
         if User.query.filter_by(email=email).first():
@@ -880,7 +890,7 @@ def register_email():
 
         otp = f"{random.randint(0, 999999):06d}"
         session['register_email'] = email
-        session['register_otp_hash'] = generate_password_hash(otp)  # ✅ hash OTP
+        session['register_otp_hash'] = generate_password_hash(otp)
         session['register_otp_expiry'] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
         session['register_otp_attempts'] = 0
 
