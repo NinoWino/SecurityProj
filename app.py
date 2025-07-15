@@ -95,9 +95,9 @@ limiter = Limiter(
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-@app.errorhandler(Exception)
-def handle_unexpected_error(e):
-    return render_template('error.html', message="An unexpected error occurred."), 500
+# @app.errorhandler(Exception)
+# def handle_unexpected_error(e):
+#     return render_template('error.html', message="An unexpected error occurred."), 500
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -225,6 +225,22 @@ def send_otp_email(user, subject, body_template):
     )
     mail.send(msg)
     return code
+
+def enforce_rate_limit(limit_string, key_prefix, error_message="Too many requests. Please try again later.", wait_seconds=60):
+    """
+    Globally usable rate limiter.
+    - `limit_string`: e.g., "3 per minute"
+    - `key_prefix`: unique string (e.g., "login:email@example.com")
+    - `error_message`: message to show user on limit breach
+    - `wait_seconds`: value to return for UI countdown (optional)
+
+    Returns (None, None) if allowed, else (error_message, wait_seconds)
+    """
+    try:
+        limiter.limit(limit_string, key_func=lambda: key_prefix)(lambda: None)()
+        return None, None
+    except RateLimitExceeded:
+        return error_message, wait_seconds
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -433,21 +449,15 @@ def forgot_password():
     error = None
 
     if form.validate_on_submit():
-        try:
-            # Inline rate limiting: max 3 requests per 5 minutes per IP
-            limiter.limit("3 per minute")(lambda: None)()
-        except RateLimitExceeded:
-            # Store a manual timer (optional, for JS countdown)
-            wait_until = datetime.utcnow() + timedelta(minutes=5)
-            session['reset_wait_until'] = wait_until.isoformat()
-            wait_seconds = 60
-            error = "Too many OTP resends. Please wait before trying again."
-            return render_template(
-                'forgot_password.html',
-                form=ResetPasswordForm(),
-                error=error,
-                wait_seconds=wait_seconds
-            )
+        error, wait = enforce_rate_limit(
+            "3 per minute",
+            key_prefix=f"forgot:{request.remote_addr}",
+            error_message="Too many OTP requests. Please wait before trying again.",
+            wait_seconds=60
+        )
+        if error:
+            session['reset_wait_until'] = (datetime.utcnow() + timedelta(seconds=wait)).isoformat()
+            return render_template('forgot_password.html', form=form, error=error, wait_seconds=wait)
 
         email = form.email.data.strip().lower()
         stmt = select(User).filter_by(email=email)
@@ -552,16 +562,15 @@ def resend_otp(context):
 
         user = db.session.get(User, user_id)
 
-        try:
-            limiter.limit("3 per minute", key_func=lambda: f"resend-login:{user.email}")(lambda: None)()
-        except RateLimitExceeded:
-            session['login_wait_until'] = (now + timedelta(minutes=1)).isoformat()
-            return render_template(
-                'two_factor.html',
-                form=OTPForm(),
-                error="Too many OTP resends. Please wait before trying again.",
-                wait_seconds=60
-            )
+        error, wait = enforce_rate_limit(
+            "3 per minute",
+            key_prefix=f"resend-login:{user.email}",
+            error_message="Too many OTP resends. Please wait before trying again.",
+            wait_seconds=60
+        )
+        if error:
+            session['login_wait_until'] = (now + timedelta(seconds=wait)).isoformat()
+            return render_template('two_factor.html', form=OTPForm(), error=error, wait_seconds=wait)
 
         try:
             send_otp_email(
@@ -580,28 +589,28 @@ def resend_otp(context):
         if not email:
             return render_template('register_email.html', form=EmailForm(), error="Session expired. Please start again.")
 
-        try:
-            limiter.limit("3 per minute", key_func=lambda: f"resend-register:{email}")(lambda: None)()
-        except RateLimitExceeded:
-            session['register_wait_until'] = (now + timedelta(minutes=1)).isoformat()
-            return render_template(
-                'register_details.html',
-                form=RegisterDetailsForm(),
-                email=email,
-                error="Too many OTP resends. Please wait before trying again.",
-                wait_seconds=60
-            )
+        error, wait = enforce_rate_limit(
+            "3 per minute",
+            key_prefix=f"resend-register:{email}",
+            error_message="Too many OTP resends. Please wait before trying again.",
+            wait_seconds=60
+        )
+        if error:
+            session['register_wait_until'] = (now + timedelta(seconds=wait)).isoformat()
+            return render_template('register_details.html', form=RegisterDetailsForm(), email=email, error=error, wait_seconds=wait)
 
         class TempUser: pass
         temp = TempUser()
         temp.email = email
         temp.username = email.split("@")[0]
-        session['register_otp'] = send_otp_email(
+
+        otp = send_otp_email(
             temp,
             subject="Your New Registration OTP",
             body_template="Your new OTP is: {code}\nIt expires in 5 minutes."
         )
-        session['register_otp_expiry'] = (now + timedelta(minutes=1)).isoformat()
+        session['register_otp_hash'] = generate_password_hash(otp)
+        session['register_otp_expiry'] = (now + timedelta(minutes=5)).isoformat()
         session['register_otp_attempts'] = 0
 
         return render_template('register_details.html', form=RegisterDetailsForm(), email=email, resent=True)
@@ -614,16 +623,15 @@ def resend_otp(context):
 
         user = db.session.get(User, user_id)
 
-        try:
-            limiter.limit("3 per minute", key_func=lambda: f"resend-reset:{user.email}")(lambda: None)()
-        except RateLimitExceeded:
-            session['reset_wait_until'] = (now + timedelta(minutes=1)).isoformat()
-            return render_template(
-                'reset_password.html',
-                form=ResetPasswordForm(),
-                error="Too many OTP resends. Please wait before trying again.",
-                wait_seconds=60
-            )
+        error, wait = enforce_rate_limit(
+            "3 per minute",
+            key_prefix=f"resend-reset:{user.email}",
+            error_message="Too many OTP resends. Please wait before trying again.",
+            wait_seconds=60
+        )
+        if error:
+            session['reset_wait_until'] = (now + timedelta(seconds=wait)).isoformat()
+            return render_template('reset_password.html', form=ResetPasswordForm(), error=error, wait_seconds=wait)
 
         try:
             send_otp_email(
@@ -1026,6 +1034,3 @@ def delete_account():
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-
-
