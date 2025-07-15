@@ -1,6 +1,6 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField, DateField
-from wtforms.validators import DataRequired, Email, EqualTo, Length ,ValidationError, Regexp
+from wtforms import StringField, PasswordField, SubmitField, DateField , SelectField
+from wtforms.validators import DataRequired, Email, EqualTo, Length ,ValidationError, Regexp , Optional
 from flask_wtf.recaptcha import RecaptchaField
 from wtforms import ValidationError
 from flask_login import current_user
@@ -122,13 +122,15 @@ class EmailForm(FlaskForm):
 class RegisterDetailsForm(FlaskForm):
     otp = StringField('OTP', validators=[DataRequired(), Length(min=6, max=6)])
 
+
+
     username = StringField('Username', validators=[
         DataRequired(),
         Length(min=3, max=25, message="Username must be 3-25 characters.")
     ])
 
     phone = StringField('Phone Number', validators=[
-        DataRequired(),
+        Optional(),
         Regexp(r'^\+?\d{8,15}$', message='Enter a valid phone number.')
     ])
 
@@ -138,6 +140,15 @@ class RegisterDetailsForm(FlaskForm):
         DataRequired(),
         Length(min=8, message='At least 8 characters.')
     ])
+
+    security_question = SelectField('Security Question', choices=[
+        ('pet', "What is the name of your first pet?"),
+        ('movie', "What is your favorite childhood movie?"),
+        ('friend', "What is your childhood best friend's first name?"),
+        ('hero', "Who was your childhood hero?")
+    ], validators=[DataRequired()])
+
+    security_answer = StringField('Answer', validators=[DataRequired()])
 
     confirm_password = PasswordField('Confirm Password', validators=[
         DataRequired(),
@@ -176,7 +187,9 @@ class ChangeEmailForm(FlaskForm):
             raise ValidationError('Email is already registered.')
 
 class DeleteAccountForm(FlaskForm):
-    submit = SubmitField('Delete Account')
+    password = PasswordField('Password', validators=[DataRequired()])
+    security_answer = StringField('Security Answer', validators=[DataRequired()])
+    submit = SubmitField('Confirm Delete')
 
 class ChangeUsernameForm(FlaskForm):
     new_username = StringField('New Username', validators=[
@@ -209,3 +222,5 @@ class ForcePasswordResetForm(FlaskForm):
             raise ValidationError(
                 "Password is too weak. Use at least 8 characters, with uppercase, lowercase, numbers, and symbols.")
         validate_pwned_password(field)
+
+

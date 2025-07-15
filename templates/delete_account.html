@@ -1,11 +1,51 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="container mt-5 col-md-5 mx-auto">
   <h3 class="text-danger">Delete Account</h3>
   <p>This action is irreversible. Are you sure you want to delete your account?</p>
-  <form method="POST">
+
+  <form id="deleteForm" method="POST">
     {{ form.hidden_tag() }}
-    {{ form.submit(class="btn btn-danger") }}
+
+    <div class="mb-3">
+      {{ form.password.label(class="form-label") }}
+      {{ form.password(class="form-control") }}
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Security Question:</label>
+      <p><strong>{{ current_user.security_question }}</strong></p>
+      {{ form.security_answer(class="form-control") }}
+      {% for error in form.security_answer.errors %}
+        <div class="text-danger">{{ error }}</div>
+      {% endfor %}
+    </div>
+
+    <!-- Trigger modal instead of direct submit -->
+    <button type="button" class="btn btn-danger w-100" data-bs-toggle="modal" data-bs-target="#confirmDeleteModal">
+      Delete Account
+    </button>
   </form>
 </div>
+
+<!-- Confirmation Modal -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-labelledby="confirmDeleteLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="confirmDeleteLabel">Confirm Deletion</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>This action cannot be undone. Are you sure you want to delete your account?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" onclick="document.getElementById('deleteForm').submit();">Yes, Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

@@ -44,7 +44,7 @@
       </div>
 
       <div class="mb-3">
-        {{ form.phone.label(class="form-label") }}
+        {{ form.phone.label(class="form-label") }} <small class="text-muted">(Optional)</small>
         {{ form.phone(class="form-control") }}
         {% for error in form.phone.errors %}
           <div class="text-danger">{{ error }}</div>
@@ -60,6 +60,21 @@
           <div class="text-danger">{{ error }}</div>
         {% endfor %}
       </div>
+
+      <div class="mb-3">
+        {{ form.security_question.label(class="form-label") }}
+        {{ form.security_question(class="form-select") }}
+      </div>
+
+      <div class="mb-3">
+        {{ form.security_answer.label(class="form-label") }}
+        {{ form.security_answer(class="form-control") }}
+        {% for error in form.security_answer.errors %}
+        <div class="text-danger">{{ error }}</div>
+      {% endfor %}
+      </div>
+
+
 
 
       <div class="mb-3">

@@ -630,6 +630,9 @@ def register_details():
             birthdate=form.birthdate.data,
             role_id=1
         )
+
+        new_user.security_question = form.security_question.data
+        new_user.security_answer_hash = generate_password_hash(form.security_answer.data.strip())
         db.session.add(new_user)
         db.session.commit()
 
@@ -708,22 +711,33 @@ def delete_account():
     form = DeleteAccountForm()
 
     if form.validate_on_submit():
+        user = db.session.get(User, current_user.id)
+
+        # Check password
+        if not check_password_hash(user.password, form.password.data):
+            flash("Incorrect password.", "danger")
+            return redirect(url_for('delete_account'))
+
+        # Check security answer
+        if not check_password_hash(user.security_answer_hash, form.security_answer.data.strip()):
+            flash("Incorrect security answer.", "danger")
+            return redirect(url_for('delete_account'))
+
         try:
-            user = db.session.get(User, current_user.id)  # Safely retrieve mapped instance
             logout_user()
             db.session.delete(user)
             db.session.commit()
             session.clear()
             flash('Account deleted successfully.', 'success')
             return redirect(url_for('login'))
+
         except Exception:
             db.session.rollback()
             flash('Failed to delete account. Please try again.', 'danger')
 
     return render_template('delete_account.html', form=form)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+
 
 
 @app.route('/force_password_reset', methods=['GET', 'POST'])
@@ -762,3 +776,7 @@ def force_password_reset():
 
     return render_template('force_password_reset.html', form=form, error=error)
 
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
