@@ -55,7 +55,8 @@ app.permanent_session_lifetime = timedelta(minutes=30)
 # Secure cookies
 app.config.update({
     "SESSION_COOKIE_HTTPONLY": True,
-    "SESSION_COOKIE_SAMESITE": "Lax"
+    "SESSION_COOKIE_SAMESITE": "Lax",
+    "SESSION_COOKIE_SECURE": True
 })
 
 db.init_app(app)
@@ -77,6 +78,10 @@ def add_no_cache_headers(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
     return response
 
 login_manager = LoginManager()
