@@ -135,3 +135,7 @@ class ChangeEmailForm(FlaskForm):
 
 class DeleteAccountForm(FlaskForm):
     submit = SubmitField('Delete Account')
+
+class VerifyTOTPForm(FlaskForm):
+    token = StringField('Authentication Code', validators=[DataRequired(), Length(min=6, max=6)])
+    submit = SubmitField('Verify')
