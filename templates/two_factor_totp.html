@@ -2,35 +2,31 @@
 {% block content %}
 <div class="container d-flex flex-column align-items-center justify-content-center mt-5">
   <div class="col-md-4">
-    <h3 class="text-center mb-3">Verification Code</h3>
-    <p class="text-center text-muted">Enter the 6-digit code sent to your email.</p>
+    <h3 class="text-center mb-3">Authenticator Code</h3>
+    <p class="text-center text-muted">Enter the 6-digit code from your authenticator app.</p>
     <form method="POST" id="otpForm">
       {{ form.hidden_tag() }}
       <input type="hidden" id="token-field" name="{{ form.token.name }}">
       <div class="d-flex justify-content-center gap-2 my-4 verification-input-container">
-        <input type="text" name="digit1" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input" autofocus>
-        <input type="text" name="digit2" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
-        <input type="text" name="digit3" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
-        <input type="text" name="digit4" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
-        <input type="text" name="digit5" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
-        <input type="text" name="digit6" maxlength="1" pattern="\d*" inputmode="numeric" class="form-control text-center verification-input">
+        <input type="text" name="digit1" maxlength="1" class="form-control text-center verification-input" autofocus>
+        <input type="text" name="digit2" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit3" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit4" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit5" maxlength="1" class="form-control text-center verification-input">
+        <input type="text" name="digit6" maxlength="1" class="form-control text-center verification-input">
       </div>
-      <button type="submit" class="btn btn-dark w-100">Verify Account</button>
-      {% if resent %}
-      <div class="alert alert-success mt-3 text-center">
-        A new code has been sent.
+      <button type="submit" class="btn btn-dark w-100">Verify Code</button>
+      <div class="text-center mt-3">
+        Lost access to your app? <a href="{{ url_for('fallback_to_email_otp') }}">Use email instead</a>
       </div>
-      {% endif %}
 
       {% if error %}
         <div class="alert alert-danger mt-3 text-center">{{ error }}</div>
       {% endif %}
     </form>
-    <div class="text-center mt-3">
-      Didn’t receive code? <a href="{{ url_for('resend_otp', context='login') }}">Resend</a>
-    </div>
   </div>
 </div>
+
 <style>
 .verification-input {
   width: 3rem;
@@ -42,28 +38,25 @@
   color: #fff;
 }
 </style>
+
 <script>
 (function() {
   const inputs = document.querySelectorAll('.verification-input');
   const container = document.querySelector('.verification-input-container');
 
   inputs.forEach((input, idx) => {
-    // Block non-numeric input
+    // Allow only digits
     input.addEventListener('keypress', (e) => {
-      if (!/[0-9]/.test(e.key)) {
-        e.preventDefault();
-      }
+      if (!/[0-9]/.test(e.key)) e.preventDefault();
     });
 
-    // Auto-forward and strip invalid characters
     input.addEventListener('input', () => {
-      input.value = input.value.replace(/\D/g, '');  // remove non-digits
+      input.value = input.value.replace(/\D/g, '');
       if (input.value.length === 1 && idx < inputs.length - 1) {
         inputs[idx + 1].focus();
       }
     });
 
-    // Handle keyboard nav
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Backspace' && !input.value && idx > 0) {
         inputs[idx - 1].focus();
@@ -76,7 +69,6 @@
       }
     });
 
-    // Paste handling
     input.addEventListener('paste', (e) => {
       e.preventDefault();
       const paste = (e.clipboardData || window.clipboardData).getData('text')
@@ -95,28 +87,10 @@
     (firstEmpty || inputs[0]).focus();
   });
 
-  // Combine input values into hidden field
-  document.getElementById('otpForm').addEventListener('submit', function(e) {
+  document.getElementById('otpForm').addEventListener('submit', function() {
     const token = Array.from(inputs).map(inp => inp.value).join('');
     document.getElementById('token-field').value = token;
   });
 })();
 </script>
-
-{% if wait_seconds %}
-  <div class="text-center text-muted mt-3">
-    You can request another OTP in <span id="countdown">{{ wait_seconds }}</span> seconds.
-  </div>
-  <script>
-    let remaining = {{ wait_seconds }};
-    const el = document.getElementById('countdown');
-    const interval = setInterval(() => {
-      remaining -= 1;
-      el.textContent = remaining;
-      if (remaining <= 0) clearInterval(interval);
-    }, 1000);
-  </script>
-{% endif %}
-
-
 {% endblock %}

@@ -19,15 +19,26 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(100), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)
 
+
+    id                 = db.Column(db.Integer, primary_key=True)
+    username           = db.Column(db.String(50), unique=True, nullable=False)
+    email              = db.Column(db.String(100), unique=True, nullable=False)
+    password           = db.Column(db.String(255), nullable=False)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id', ondelete='RESTRICT'), nullable=False, default=1)
-    role = db.relationship('Role', backref='users')
+    role = db.relationship('Role', back_populates='users')
+    # Lockout & 2FA
+    failed_attempts    = db.Column(db.Integerr, nullable=False, default=0)
+    last_failed_login  = db.Column(db.DateTime, nullable=True)
+    is_locked          = db.Column(db.Boolean, default=False)
+    two_factor_enabled = db.Column(db.Boolean, default=True)
+    otp_code           = db.Column(db.String(255), nullable=True)
+    otp_expiry         = db.Column(db.DateTime, nullable=True)
+    totp_secret = db.Column(db.String(32), nullable=True)
+    preferred_2fa = db.Column(db.String(10), default='email')
+    region_lock_enabled = db.Column(db.Boolean, default=False)
+    last_country = db.Column(db.String(64))
+    signup_method = db.Column(db.String(20), nullable=False, default='email')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    failed_attempts = db.Column(db.Integer, nullable=False, default=0)
-    last_failed_login = db.Column(db.DateTime, nullable=True)
-    is_locked = db.Column(db.Boolean, nullable=False, default=False)
-    two_factor_enabled = db.Column(db.Boolean, nullable=False, default=True)
-    otp_code = db.Column(db.String(6))
-    otp_expiry = db.Column(db.DateTime)
     is_active = db.Column(db.Boolean, default=True)
 
 @property

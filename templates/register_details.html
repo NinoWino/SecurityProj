@@ -15,7 +15,7 @@
         {% endfor %}
       </div>
       <p class="text-center mt-3">
-        Didn’t receive code? <a href="{{ url_for('resend_register_otp') }}">Resend OTP</a>
+        Didn’t receive code? <a href="{{ url_for('resend_otp', context='register') }}">Resend OTP</a>
       </p>
 
       <div class="mb-3">
@@ -44,6 +44,27 @@
 
       {{ form.submit(class="btn btn-dark w-100") }}
     </form>
+    {% if error %}
+  <div class="alert alert-danger mt-3 text-center">{{ error }}</div>
+    {% endif %}
+    {% if resent %}
+      <div class="alert alert-success mt-3 text-center">A new OTP has been sent.</div>
+    {% endif %}
   </div>
 </div>
+{% if wait_seconds %}
+  <div class="text-center text-muted mt-3">
+    You can request another OTP in <span id="countdown">{{ wait_seconds }}</span> seconds.
+  </div>
+  <script>
+    let remaining = {{ wait_seconds }};
+    const el = document.getElementById('countdown');
+    const interval = setInterval(() => {
+      remaining -= 1;
+      el.textContent = remaining;
+      if (remaining <= 0) clearInterval(interval);
+    }, 1000);
+  </script>
+{% endif %}
+
 {% endblock %}

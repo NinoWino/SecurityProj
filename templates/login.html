@@ -16,6 +16,30 @@
       {% if error %}
         <div class="alert alert-danger" >{{ error }}</div>
       {% endif %}
+      {% if lockout_seconds %}
+        <div class="alert alert-warning mt-2 text-center">
+          Try again in <span id="lockout-timer">{{ lockout_seconds }}</span> seconds.
+        </div>
+        <script>
+          const timerEl = document.getElementById("lockout-timer");
+          let remaining = parseInt(timerEl.innerText);
+
+          const countdown = setInterval(() => {
+            remaining -= 1;
+            timerEl.innerText = remaining;
+            if (remaining <= 0) clearInterval(countdown);
+          }, 1000);
+        </script>
+      {% endif %}
+      {% if message == 'logged_out' %}
+        <div class="alert alert-info mt-3">You have been logged out.</div>
+      {% elif message == 'timeout' %}
+        <div class="alert alert-warning mt-3">
+          You were logged out due to inactivity. Please log in again.
+        </div>
+      {% elif message == 'pw_changed' %}
+        <div class="alert alert-success mt-3">
+          Your password was changed. Please log in again.
         </div>
       <button type="submit" class="btn btn-dark w-100">Login</button>
       <p class="mt-3 text-center">

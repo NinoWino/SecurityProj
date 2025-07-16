@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-5 col-md-6 mx-auto">
+  <div class="card shadow-sm">
+    <div class="card-body text-center">
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, msg in messages %}
+            <div class="alert alert-{{ category }} mt-2">{{ msg }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      {% if step == '1' %}
+        <h4 class="mb-3">Set Up Your Authenticator App</h4>
+        <p>Download an app on your phone to generate unique security codes. Suggested apps include Google Authenticator, Microsoft Authenticator, and Twilio's Authy.</p>
+        <form method="GET" action="{{ url_for('setup_totp_step2') }}">
+          <button class="btn btn-primary w-100">Start Setup</button>
+        </form>
+
+      {% elif step == '2' %}
+        <h4 class="mb-3">Scan This QR Code</h4>
+        <p>Open your authenticator app and scan this QR code:</p>
+        <img src="{{ url_for('setup_totp') }}" alt="QR Code" class="my-3 border shadow-sm">
+        <p class="small text-muted">Can’t scan? Enter this key manually:</p>
+        <div class="mb-3"><strong>{{ manual_key }}</strong></div>
+        <form method="GET" action="{{ url_for('setup_totp_step3') }}">
+          <button class="btn btn-primary w-100">I’ve Scanned the Code</button>
+        </form>
+
+      {% elif step == '3' %}
+        <h4 class="mb-3">Verify Setup</h4>
+        <p>Enter the 6-digit code from your authenticator app:</p>
+        <form method="POST" action="{{ url_for('setup_totp_step3') }}">
+          {{ form.hidden_tag() }}
+          <div class="mb-3">
+            {{ form.token.label(class="form-label") }}
+            {{ form.token(class="form-control text-center", autocomplete="off") }}
+          </div>
+          <button class="btn btn-success w-100">Verify & Activate</button>
+        </form>
+        {% if error %}
+          <div class="alert alert-danger mt-3">{{ error }}</div>
+        {% endif %}
+
+      {% elif step == 'done' %}
+        <h4 class="mb-3 text-success">✅ Setup Complete</h4>
+        <p>Your Authenticator App is now active. You’ll be prompted for a code each time you log in.</p>
+        <a href="{{ url_for('security') }}" class="btn btn-outline-dark w-100">Return to Security Settings</a>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% endblock %}
