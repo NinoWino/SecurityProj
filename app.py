@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 from flask_login import (
@@ -6,7 +6,8 @@ from flask_login import (
     login_required, current_user
 )
 from werkzeug.security import check_password_hash, generate_password_hash
-from models import db, User
+from models import db, User, SystemAuditLog, KnownDevice, role_required, LoginAuditLog
+from hashlib import sha256
 from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm
 from datetime import datetime, timedelta
 import random
@@ -35,6 +36,7 @@ app.config.update({
     'MAIL_PASSWORD': os.getenv('MAIL_PASSWORD'),
     'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
 })
+
 
 mail = Mail(app)
 # Config
@@ -73,6 +75,45 @@ google = oauth.register(
     }
 )
 
+# Device hash generator for device recognition
+def generate_device_hash(ip, user_agent):
+    return sha256(f"{ip}_{user_agent}".encode()).hexdigest()
+
+# Get public IP and location using ipify + ipapi
+def get_ip_and_location():
+    try:
+        ip_response = requests.get('https://api.ipify.org?format=json', timeout=3)
+        ip = ip_response.json().get('ip')
+
+        loc_response = requests.get(f'https://ipapi.co/{ip}/json/', timeout=3)
+        loc_data = loc_response.json()
+
+        city = loc_data.get('city', '')
+        region = loc_data.get('region', '')
+        country = loc_data.get('country_name', '')
+
+        location_str = ', '.join(filter(None, [city, region, country]))  # just for display
+        return ip, location_str, {'city': city, 'region': region, 'country': country}
+    except Exception as e:
+        print("GeoIP fetch failed:", e)
+        return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
+
+
+# System Audit Log
+def log_system_action(user_id, action_type, description=None):
+    ip, location = get_ip_and_location()
+    user_agent = request.headers.get('User-Agent')
+
+    log = SystemAuditLog(
+        user_id=user_id,
+        action_type=action_type,
+        description=description,
+        ip_address=ip,
+        user_agent=user_agent,
+        location=location
+    )
+    db.session.add(log)
+    db.session.commit()
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -270,16 +311,25 @@ def login():
     error = None
     LOCK_DURATION = timedelta(seconds=60)
     MAX_ATTEMPTS = 3
+    ip, location_str, location_data = get_ip_and_location()
+    user_agent = request.headers.get('User-Agent')
+    success = False
+    user = None
 
     if form.validate_on_submit():
-        stmt = select(User).filter_by(email=form.email.data.strip().lower())
+        email = form.email.data.strip().lower()
+        stmt = select(User).filter_by(email=email)
         user = db.session.scalars(stmt).first()
+        user_id = user.id if user else None
 
-        if user and user.signup_method.lower() != 'email':
-            flash(f"This account was created using {user.signup_method.capitalize()}. Please use that login method.", "warning")
+        # Region block for social login accounts
+        if user and (user.signup_method or '').lower() != 'email':
+            method = (user.signup_method or 'another method').capitalize()
+            flash(f"Login method mismatch. Use {method} instead.", "warning")
             return redirect(url_for('login'))
 
         if user:
+            # Account lockout check
             if user.is_locked:
                 if user.last_failed_login and datetime.utcnow() - user.last_failed_login >= LOCK_DURATION:
                     user.failed_attempts = 0
@@ -287,17 +337,14 @@ def login():
                     db.session.commit()
                 else:
                     remaining = LOCK_DURATION - (datetime.utcnow() - user.last_failed_login)
-                    seconds_left = max(0, int(remaining.total_seconds()))
-                    return render_template('login.html', form=form, error="Account locked. Please try again later.",
-                                           lockout_seconds=seconds_left)
+                    return render_template('login.html', form=form, error="Account locked.",
+                                           lockout_seconds=int(remaining.total_seconds()))
 
             if check_password_hash(user.password, form.password.data):
-                location = get_location_data()
-                current_country = location.get('country')
-
+                current_country = location_data.get('country')
                 if user.region_lock_enabled:
                     if user.last_country and user.last_country != current_country:
-                        flash(f"Login blocked: region mismatch. Expected {user.last_country}, got {current_country}.", "danger")
+                        flash(f"Region mismatch. Expected {user.last_country}, got {current_country}.", "danger")
                         return redirect(url_for('login'))
                     elif not user.last_country:
                         user.last_country = current_country
@@ -307,33 +354,51 @@ def login():
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor_totp'))
 
-                if user.two_factor_enabled:
-                    session['pre_2fa_user_id'] = user.id
-                    code = f"{random.randint(0, 999999):06d}"
-                    user.otp_code = generate_password_hash(code)
-                    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-                    db.session.commit()
+                # if user.two_factor_enabled:
+                #     session['pre_2fa_user_id'] = user.id
+                #     code = f"{random.randint(0, 999999):06d}"
+                #     user.otp_code = generate_password_hash(code)
+                #     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                #     db.session.commit()
+                #
+                #     try:
+                #         mail.send(Message(
+                #             subject="Your One-Time Login Code",
+                #             recipients=[user.email],
+                #             body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
+                #         ))
+                #     except Exception:
+                #         flash("Failed to send OTP. Try again later.", "danger")
+                #         return redirect(url_for('login'))
+                #
+                #     return redirect(url_for('two_factor'))
 
-                    msg = Message(
-                        subject="Your One-Time Login Code",
-                        recipients=[user.email],
-                        body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
-                    )
-                    try:
-                        mail.send(msg)
-                    except Exception:
-                        flash("Failed to send email. Please try again later.", "danger")
-                        return redirect(url_for('login'))
-
-                    return redirect(url_for('two_factor'))
-
+                # Successful login
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
                 user.failed_attempts = 0
                 db.session.commit()
+                success = True
                 send_login_alert_email(user)
+
+                # Track known devices
+                device_hash = generate_device_hash(ip, user_agent)
+                known_device = KnownDevice.query.filter_by(user_id=user.id, device_hash=device_hash).first()
+                if known_device:
+                    known_device.last_seen = datetime.utcnow()
+                else:
+                    db.session.add(KnownDevice(
+                        user_id=user.id,
+                        device_hash=device_hash,
+                        ip_address=ip,
+                        user_agent=user_agent,
+                        location=location
+                    ))
+                db.session.commit()
+
                 return redirect(url_for('profile'))
 
+            # Failed login attempt
             user.failed_attempts += 1
             user.last_failed_login = datetime.utcnow()
             if user.failed_attempts >= MAX_ATTEMPTS:
@@ -343,14 +408,29 @@ def login():
         else:
             error = 'Email not found.'
 
+        # Log the attempt
+        db.session.add(LoginAuditLog(
+            user_id=user_id,
+            email=email,
+            success=success,
+            ip_address=ip,
+            user_agent=user_agent,
+            location=location
+        ))
+        db.session.commit()
+
     return render_template('login.html', form=form, error=error, message=request.args.get('message'))
-
-
 
 @app.route('/login/google')
 def login_google():
     redirect_uri = url_for('auth_callback', _external=True)
     return google.authorize_redirect(redirect_uri)
+
+@app.route('/user')
+@login_required
+@role_required(1, 2, 3)
+def user_dashboard():
+    return render_template('user_dashboard.html')
 
 @app.route('/auth/callback')
 def auth_callback():
@@ -373,9 +453,12 @@ def auth_callback():
     stmt = select(User).filter_by(email=email)
     user = db.session.scalars(stmt).first()
 
-    if user and user.signup_method.lower() != 'google':
-        flash(f"This email is registered {user.signup_method.capitalize()}. Please use the correct login option.", "warning")
-        return redirect(url_for('login'))
+    if user:
+        signup_method = user.signup_method or 'another method'
+        if signup_method.lower() != 'google':
+            flash(f"This email is registered {signup_method.capitalize()}. Please use the correct login option.",
+                  "warning")
+            return redirect(url_for('login'))
 
     if not user:
         try:
@@ -1017,6 +1100,149 @@ def product():
 def stafflogin():
     return render_template('stafflogin.html')
 
+@app.route('/staff')
+@login_required
+@role_required(2, 3)
+def staff_dashboard():
+    return render_template('staff_dashboard.html')
+
+@app.route('/admin')
+@login_required
+@role_required(3)
+def admin_dashboard():
+    return render_template('admin_dashboard.html')
+
+@app.route('/admin/overview')
+@login_required
+@role_required(3)
+def admin_overview():
+    utc_now = datetime.utcnow()
+    day_ago = utc_now - timedelta(days=1)
+
+    total_users = User.query.count()
+    new_signups = User.query.filter(User.created_at >= day_ago).count()
+    successful_logins_24h = LoginAuditLog.query.filter(
+        LoginAuditLog.timestamp >= day_ago,
+        LoginAuditLog.success == True
+    ).count()
+
+    failed_logins_24h = LoginAuditLog.query.filter(
+        LoginAuditLog.timestamp >= day_ago,
+        LoginAuditLog.success == False
+    ).count()
+
+    deactivated_accounts = User.query.filter_by(is_active=False).count()
+    active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
+
+    return render_template(
+        'admin_overview.html',
+        total_users=total_users,
+        new_signups=new_signups,
+        successful_logins_24h=successful_logins_24h,
+        failed_logins_24h=failed_logins_24h,
+        active_today=active_today,
+        deactivated_accounts=deactivated_accounts
+    )
+
+@app.route('/admin/users')
+@login_required
+@role_required(3)
+def manage_users():
+    search = request.args.get('search', '').strip()
+    role = request.args.get('role', '')
+
+    query = User.query
+    if search:
+        query = query.filter(
+            (User.username.ilike(f"%{search}%")) | (User.email.ilike(f"%{search}%"))
+        )
+    if role.isdigit():
+        query = query.filter_by(role_id=int(role))
+
+    users = query.order_by(User.id.desc()).all()
+    return render_template('admin_users.html', users=users, search=search, role_filter=role)
+
+@app.route('/admin/user/add', methods=['GET', 'POST'])
+@login_required
+@role_required(3)
+def add_user():
+    if request.method == 'POST':
+        username = request.form['username']
+        email = request.form['email']
+        password = generate_password_hash(request.form['password'])
+        role_id = int(request.form['role_id'])
+
+        new_user = User(username=username, email=email, password=password, role_id=role_id)
+        db.session.add(new_user)
+        db.session.commit()
+        flash('New user added.', 'success')
+        return redirect(url_for('manage_users'))
+
+    return render_template('admin_user_form.html', action='Add')
+
+@app.route('/admin/user/<int:user_id>/edit', methods=['GET', 'POST'])
+@login_required
+@role_required(3)
+def edit_user(user_id):
+    user = User.query.get_or_404(user_id)
+
+    if request.method == 'POST':
+        user.username = request.form['username']
+        user.email = request.form['email']
+        user.role_id = int(request.form['role_id'])
+        if request.form['password']:
+            user.password = generate_password_hash(request.form['password'])
+        db.session.commit()
+        flash('User updated.', 'success')
+        return redirect(url_for('manage_users'))
+
+    return render_template('admin_user_form.html', action='Edit', user=user)
+
+@app.route('/admin/users')
+@login_required
+@role_required(3)
+def admin_manage_users():
+    users = User.query.all()
+    return render_template('admin_users.html', users=users)
+
+@app.route('/admin/user/<int:user_id>/toggle')
+@login_required
+@role_required(3)
+def toggle_user_activation(user_id):
+    user = User.query.get_or_404(user_id)
+    user.is_active = not user.is_active
+    db.session.commit()
+    flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
+    return redirect(url_for('manage_users'))
+
+@app.route('/admin/security_dashboard')
+@login_required
+@role_required(3)
+def security_dashboard():
+    logs_query = LoginAuditLog.query
+
+    # Get filter values from request
+    email_filter = request.args.get('email')
+    location_filter = request.args.get('location')
+    success_filter = request.args.get('success')
+
+    if email_filter:
+        logs_query = logs_query.filter(LoginAuditLog.email == email_filter)
+    if location_filter:
+        logs_query = logs_query.filter(LoginAuditLog.location == location_filter)
+    if success_filter in ['0', '1']:
+        logs_query = logs_query.filter(LoginAuditLog.success == bool(int(success_filter)))
+
+    logs = logs_query.order_by(LoginAuditLog.timestamp.desc()).limit(50).all()
+    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(50).all()
+
+    # ✨ Fetch unique filter values
+    emails = [e[0] for e in db.session.query(LoginAuditLog.email).distinct().all()]
+    locations = [l[0] for l in db.session.query(LoginAuditLog.location).distinct().all()]
+
+    return render_template('security_dashboard.html', logs=logs, devices=devices,
+                           emails=emails, locations=locations)
+
 @app.route('/contact')
 def contact():
     return render_template('contact.html')
@@ -1130,6 +1356,10 @@ def force_password_reset():
             return redirect(url_for('login'))
 
     return render_template('force_password_reset.html', form=form, error=error)
+
+@app.errorhandler(403)
+def forbidden(error):
+    return render_template('403.html'), 403
 
 if __name__ == '__main__':
     app.run(debug=True)
