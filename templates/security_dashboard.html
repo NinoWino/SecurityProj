@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Security Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    .table-wrapper {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container mt-5">
+    <h1>Security Dashboard</h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-primary mb-3">Back to Admin Dashboard</a>
+    <a href="{{ url_for('logout') }}" class="btn btn-secondary mb-3">Logout</a>
+
+    <!-- Filter Form -->
+    <form method="get" class="row g-3 mb-4">
+  <div class="col-md-4">
+    <select class="form-select" name="email">
+      <option value="">All Emails</option>
+      {% for email in emails %}
+      <option value="{{ email }}" {% if request.args.get('email') == email %}selected{% endif %}>{{ email }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="col-md-3">
+    <select class="form-select" name="success">
+      <option value="">All</option>
+      <option value="1" {% if request.args.get('success') == '1' %}selected{% endif %}>Success</option>
+      <option value="0" {% if request.args.get('success') == '0' %}selected{% endif %}>Failure</option>
+    </select>
+  </div>
+  <div class="col-md-3">
+    <select class="form-select" name="location">
+      <option value="">All Locations</option>
+      {% for location in locations %}
+      <option value="{{ location }}" {% if request.args.get('location') == location %}selected{% endif %}>{{ location }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-outline-primary w-100">Filter</button>
+  </div>
+</form>
+
+
+    <h3>Recent Login Attempts</h3>
+    <div class="table-wrapper mb-4">
+      <table class="table table-striped table-bordered">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>User ID</th>
+            <th>Email</th>
+            <th>Success</th>
+            <th>IP Address</th>
+            <th>Location</th>
+            <th>User Agent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          <tr>
+            <td>{{ log.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>{{ log.user_id or 'N/A' }}</td>
+            <td>{{ log.email }}</td>
+            <td>{% if log.success %}<span class="text-success">Yes</span>{% else %}<span class="text-danger">No</span>{% endif %}</td>
+            <td>{{ log.ip_address }}</td>
+            <td>{{ log.location or 'Unknown' }}</td>
+            <td>{{ log.user_agent|truncate(60) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7">No login records found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Known Devices</h3>
+    <div class="table-wrapper">
+      <table class="table table-striped table-bordered">
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Device Hash</th>
+            <th>IP Address</th>
+            <th>User Agent</th>
+            <th>Location</th>
+            <th>First Seen</th>
+            <th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for device in devices %}
+          <tr>
+            <td>{{ device.user_id }}</td>
+            <td>{{ device.device_hash[:10] }}...</td>
+            <td>{{ device.ip_address }}</td>
+            <td>{{ device.user_agent|truncate(60) }}</td>
+            <td>{{ device.location or 'Unknown' }}</td>
+            <td>{{ device.first_seen.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>{{ device.last_seen.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7">No known devices found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</body>
+</html>

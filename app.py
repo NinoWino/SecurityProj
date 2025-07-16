@@ -1,12 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select
-from flask_login import (
-    LoginManager, login_user, logout_user,
-    login_required, current_user
-)
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
-from models import db, User
+
+from hashlib import sha256
+import requests
+from models import db, User, SystemAuditLog, KnownDevice, role_required, LoginAuditLog
 from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm
 from datetime import datetime, timedelta
 import random
@@ -21,23 +20,12 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
 
-
 load_dotenv()
 
 app = Flask(__name__)
-# … your existing config …
-app.config.update({
-    'MAIL_SERVER':   'smtp.gmail.com',
-    'MAIL_PORT':     587,
-    'MAIL_USE_TLS':  True,
-    'MAIL_USERNAME': os.getenv('MAIL_USERNAME'),
-    'MAIL_PASSWORD': os.getenv('MAIL_PASSWORD'),
-    'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
-})
 
-mail = Mail(app)
 # Config
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://securityprojuser:Mysql123@127.0.0.1:3306/securityproject'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['RECAPTCHA_PUBLIC_KEY'] = os.getenv('RECAPTCHA_PUBLIC_KEY')
 app.config['RECAPTCHA_PRIVATE_KEY'] = os.getenv('RECAPTCHA_PRIVATE_KEY')
@@ -88,6 +76,21 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
+# System Audit Log
+def log_system_action(user_id, action_type, description=None):
+    ip, location = get_ip_and_location()
+    user_agent = request.headers.get('User-Agent')
+
+    log = SystemAuditLog(
+        user_id=user_id,
+        action_type=action_type,
+        description=description,
+        ip_address=ip,
+        user_agent=user_agent,
+        location=location
+    )
+    db.session.add(log)
+    db.session.commit()
 
 limiter = Limiter(
     get_remote_address,
@@ -106,13 +109,30 @@ limiter = Limiter(
 
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    return User.query.get(int(user_id))
 
-@login_manager.unauthorized_handler
-def on_unauthorized():
-    if session.get('last_active'):
-        return redirect(url_for('login', message='timeout'))
-    return redirect(url_for('login'))
+# Device hash generator for device recognition
+def generate_device_hash(ip, user_agent):
+    return sha256(f"{ip}_{user_agent}".encode()).hexdigest()
+
+# Get public IP and location using ipify + ipapi
+def get_ip_and_location():
+    try:
+        ip_response = requests.get('https://api.ipify.org?format=json', timeout=3)
+        ip = ip_response.json().get('ip')
+
+        loc_response = requests.get(f'https://ipapi.co/{ip}/json/', timeout=3)
+        loc_data = loc_response.json()
+
+        city = loc_data.get('city', '')
+        region = loc_data.get('region', '')
+        country = loc_data.get('country_name', '')
+
+        location = ', '.join(filter(None, [city, region, country]))
+        return ip, location
+    except Exception as e:
+        print("GeoIP fetch failed:", e)
+        return "Unknown", "Unknown"
 
 def get_public_ip():
     try:
@@ -262,6 +282,22 @@ def home():
 # LOGIN
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+
+    error = None
+    if request.method == 'POST':
+        email = request.form['email']
+        password = request.form['password']
+        user = User.query.filter_by(email=email).first()
+
+        success = False
+        user_id = user.id if user else None
+
+        # Get IP and location
+        ip, location = get_ip_and_location()
+        if user and not user.is_active:
+            error = 'This account is deactivated.'
+            return render_template('login.html', error=error)
+
     if current_user.is_authenticated:
         return redirect(url_for('profile'))
 
@@ -344,13 +380,43 @@ def login():
 
     return render_template('login.html', form=form, error=error, message=request.args.get('message'))
 
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            success = True
 
+            user_agent = request.headers.get('User-Agent')
+            device_hash = generate_device_hash(ip, user_agent)
 
-@app.route('/login/google')
-def login_google():
-    redirect_uri = url_for('auth_callback', _external=True)
-    return google.authorize_redirect(redirect_uri)
+            known_device = KnownDevice.query.filter_by(user_id=user.id, device_hash=device_hash).first()
+            if known_device:
+                known_device.last_seen = datetime.utcnow()
+            else:
+                known_device = KnownDevice(
+                    user_id=user.id,
+                    device_hash=device_hash,
+                    ip_address=ip,
+                    user_agent=user_agent,
+                    location=location
+                )
+                db.session.add(known_device)
 
+        # Log the login attempt
+        log = LoginAuditLog(
+            user_id=user_id,
+            email=email,
+            success=success,
+            ip_address=ip,
+            user_agent=request.headers.get('User-Agent'),
+            location=location
+        )
+        db.session.add(log)
+        db.session.commit()
+
+        if success:
+            return redirect(url_for('profile'))
+        else:
+            error = 'Invalid email or password.'
+            
 @app.route('/auth/callback')
 def auth_callback():
     try:
@@ -412,38 +478,86 @@ def auth_callback():
     return redirect(url_for('profile'))
 
 
-
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
-    session.clear()
-    return redirect(url_for('login', message='logged_out'))
+    flash('Logged out.', 'info')
+    return redirect(url_for('login'))
 
-@app.route('/change_password', methods=['GET', 'POST'])
+@app.route('/register')
+def register():
+    return render_template('register.html')
+
+@app.route('/profile')
 @login_required
-def change_password():
-    form = ChangePasswordForm()
-    error = None
+def profile():
+    return render_template("profile.html")
 
-    if form.validate_on_submit():
-        # Verify current password
-        if not check_password_hash(current_user.password, form.old_password.data):
-            error = 'Current password is incorrect.'
-        # Prevent new password == old password
-        elif check_password_hash(current_user.password, form.new_password.data):
-            error = 'New password must be different from the old password.'
-        else:
-            # Hash and save the new password
-            current_user.password = generate_password_hash(form.new_password.data)
-            db.session.commit()
+@app.route('/product')
+@login_required
+def product():
+    return render_template('product.html')
 
-            # Invalidate session and force re-login
-            logout_user()
-            session.clear()
-            return redirect(url_for('login', message='pw_changed'))
+@app.route('/stafflogin')
+def stafflogin():
+    return render_template('stafflogin.html')
 
-    return render_template('change_password.html', form=form, error=error)
+@app.route('/contact')
+def contact():
+    return render_template('contact.html')
+
+# Role-based dashboards
+@app.route('/user')
+@login_required
+@role_required(1, 2, 3)
+def user_dashboard():
+    return render_template('user_dashboard.html')
+
+@app.route('/staff')
+@login_required
+@role_required(2, 3)
+def staff_dashboard():
+    return render_template('staff_dashboard.html')
+
+@app.route('/admin')
+@login_required
+@role_required(3)
+def admin_dashboard():
+    return render_template('admin_dashboard.html')
+
+@app.route('/admin/overview')
+@login_required
+@role_required(3)
+def admin_overview():
+    utc_now = datetime.utcnow()
+    day_ago = utc_now - timedelta(days=1)
+
+    total_users = User.query.count()
+    new_signups = User.query.filter(User.created_at >= day_ago).count()
+    successful_logins_24h = LoginAuditLog.query.filter(
+        LoginAuditLog.timestamp >= day_ago,
+        LoginAuditLog.success 
+      True
+    ).count()
+
+    failed_logins_24h = LoginAuditLog.query.filter(
+        LoginAuditLog.timestamp >= day_ago,
+        LoginAuditLog.success == False
+    ).count()
+
+    deactivated_accounts = User.query.filter_by(is_active=False).count()
+    active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
+
+    return render_template(
+        'admin_overview.html',
+        total_users=total_users,
+        new_signups=new_signups,
+        successful_logins_24h=successful_logins_24h,
+        failed_logins_24h=failed_logins_24h,
+        active_today=active_today,
+        deactivated_accounts=deactivated_accounts
+    )
 
 @app.route('/forgot_password', methods=['GET', 'POST'])
 def forgot_password():
@@ -653,12 +767,36 @@ def resend_otp(context):
     # --------- INVALID CONTEXT ---------
     return redirect(url_for('login'))
 
+@app.route('/admin/users')
+@login_required
+@role_required(3)
+def manage_users():
+    search = request.args.get('search', '').strip()
+    role = request.args.get('role', '')
 
-@app.route('/verify_reset_otp', methods=['GET', 'POST'])
-def verify_reset_otp():
-    if 'reset_user_id' not in session:
-        return redirect(url_for('forgot_password'))
+    query = User.query
+    if search:
+        query = query.filter(
+            (User.username.ilike(f"%{search}%")) | (User.email.ilike(f"%{search}%"))
+        )
+    if role.isdigit():
+        query = query.filter_by(role_id=int(role))
 
+    users = query.order_by(User.id.desc()).all()
+    return render_template('admin_users.html', users=users, search=search, role_filter=role)
+
+@app.route('/admin/user/add', methods=['GET', 'POST'])
+@login_required
+@role_required(3)
+def add_user():
+    if request.method == 'POST':
+        username = request.form['username']
+        email = request.form['email']
+        password = generate_password_hash(request.form['password'])
+        role_id = int(request.form['role_id'])
+
+        new_user = User(username=username, email=email, password=password, role_id=role_id)
+       
     user = db.session.get(User, session['reset_user_id'])
     form = ResetPasswordForm()
     error = None
@@ -956,96 +1094,78 @@ def register_details():
         )
         db.session.add(new_user)
         db.session.commit()
+        flash('New user added.', 'success')
+        return redirect(url_for('manage_users'))
 
-        session.clear()
-        flash('Registration successful. Please log in.', 'success')
-        return redirect(url_for('login'))
+    return render_template('admin_user_form.html', action='Add')
 
-    return render_template('register_details.html', form=form, email=email)
-
-
-
-
-
-@app.route('/profile')
+@app.route('/admin/user/<int:user_id>/edit', methods=['GET', 'POST'])
 @login_required
-def profile():
-    return render_template('profile.html')
+@role_required(3)
+def edit_user(user_id):
+    user = User.query.get_or_404(user_id)
 
+    if request.method == 'POST':
+        user.username = request.form['username']
+        user.email = request.form['email']
+        user.role_id = int(request.form['role_id'])
+        if request.form['password']:
+            user.password = generate_password_hash(request.form['password'])
+        db.session.commit()
+        flash('User updated.', 'success')
+        return redirect(url_for('manage_users'))
 
-@app.route('/product')
+    return render_template('admin_user_form.html', action='Edit', user=user)
+
+@app.route('/admin/users')
 @login_required
-def product():
-    return render_template('product.html')
+@role_required(3)
+def admin_manage_users():
+    users = User.query.all()
+    return render_template('admin_users.html', users=users)
 
-@app.route('/stafflogin')
-def stafflogin():
-    return render_template('stafflogin.html')
-
-@app.route('/contact')
-def contact():
-    return render_template('contact.html')
-
-@app.route('/change_username', methods=['GET', 'POST'])
+@app.route('/admin/user/<int:user_id>/toggle')
 @login_required
-def change_username():
-    from forms import ChangeUsernameForm
-    form = ChangeUsernameForm()
-    error = None
+@role_required(3)
+def toggle_user_activation(user_id):
+    user = User.query.get_or_404(user_id)
+    user.is_active = not user.is_active
+    db.session.commit()
+    flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
+    return redirect(url_for('manage_users'))
 
-    if form.validate_on_submit():
-        try:
-            current_user.username = form.new_username.data.strip()
-            db.session.commit()
-            flash('Username changed successfully.', 'success')
-            return redirect(url_for('profile'))
-        except Exception:
-            db.session.rollback()
-            error = 'Failed to update username. Please try again.'
-            flash(error, 'danger')
 
-    return render_template('change_username.html', form=form, error=error)
-
-@app.route('/change_email', methods=['GET', 'POST'])
+@app.route('/admin/security_dashboard')
 @login_required
-def change_email():
-    from forms import ChangeEmailForm
-    form = ChangeEmailForm()
-    error = None
+@role_required(3)
+def security_dashboard():
+    logs_query = LoginAuditLog.query
 
-    if form.validate_on_submit():
-        try:
-            current_user.email = form.new_email.data.strip()
-            db.session.commit()
-            flash('Email changed successfully.', 'success')
-            return redirect(url_for('profile'))
-        except Exception:
-            db.session.rollback()
-            error = 'Failed to update email. Please try again.'
-            flash(error, 'danger')
+    # Get filter values from request
+    email_filter = request.args.get('email')
+    location_filter = request.args.get('location')
+    success_filter = request.args.get('success')
 
-    return render_template('change_email.html', form=form, error=error)
+    if email_filter:
+        logs_query = logs_query.filter(LoginAuditLog.email == email_filter)
+    if location_filter:
+        logs_query = logs_query.filter(LoginAuditLog.location == location_filter)
+    if success_filter in ['0', '1']:
+        logs_query = logs_query.filter(LoginAuditLog.success == bool(int(success_filter)))
 
-@app.route('/delete_account', methods=['GET', 'POST'])
-@login_required
-def delete_account():
-    from forms import DeleteAccountForm
-    form = DeleteAccountForm()
+    logs = logs_query.order_by(LoginAuditLog.timestamp.desc()).limit(50).all()
+    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(50).all()
 
-    if form.validate_on_submit():
-        try:
-            user = db.session.get(User, current_user.id)  # Safely retrieve mapped instance
-            logout_user()
-            db.session.delete(user)
-            db.session.commit()
-            session.clear()
-            flash('Account deleted successfully.', 'success')
-            return redirect(url_for('login'))
-        except Exception:
-            db.session.rollback()
-            flash('Failed to delete account. Please try again.', 'danger')
+    # ✨ Fetch unique filter values
+    emails = [e[0] for e in db.session.query(LoginAuditLog.email).distinct().all()]
+    locations = [l[0] for l in db.session.query(LoginAuditLog.location).distinct().all()]
 
-    return render_template('delete_account.html', form=form)
+    return render_template('security_dashboard.html', logs=logs, devices=devices,
+                           emails=emails, locations=locations)
+
+@app.errorhandler(403)
+def forbidden(error):
+    return render_template('403.html'), 403
 
 if __name__ == '__main__':
     app.run(debug=True)
