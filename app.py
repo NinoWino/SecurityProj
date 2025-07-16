@@ -20,6 +20,7 @@ from pytz import timezone
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
+import requests
 
 
 load_dotenv()
@@ -869,28 +870,65 @@ def toggle_region_lock():
 @app.route('/register/email', methods=['GET', 'POST'])
 def register_email():
     from forms import EmailForm
+    from sqlalchemy import func
+    import re
+
     form = EmailForm()
 
     if form.validate_on_submit():
-        error, wait = enforce_rate_limit(
-            "3 per minute",
-            key_prefix=f"register_email:{request.remote_addr}",
-            error_message="Too many registration attempts. Please wait before trying again.",
-            wait_seconds=60
-        )
-        if error:
-            session['register_wait_until'] = (datetime.utcnow() + timedelta(seconds=wait)).isoformat()
-            return render_template('register_email.html', form=form, error=error, wait_seconds=wait)
+        email = form.email.data.strip().lower()
+        local_part = email.split('@')[0]
+        domain = email.split('@')[1]
 
-        email = form.email.data.strip()
+        disposable_domains = [
+            "mailinator.com", "tempmail.com", "10minutemail.com", "guerrillamail.com",
+            "trashmail.com", "maildrop.cc", "yopmail.com", "getnada.com", "sharklasers.com",
+            "spamgourmet.com", "mintemail.com", "fenexy.com", "mail.tm",
+            "emailtemporario.com", "temporaryemail.com", "throwawaymail.com", "mytaemin.com"
+        ]
+        if domain in disposable_domains:
+            flash('This email is not allowed for registration.', 'danger')
+            return redirect(url_for('register_email'))
 
+        # Bot and disposable email patterns
+        bot_patterns = [
+            r"test\d*@", r"fake\d*@", r"bot\d*@",
+            r"(noreply|no-reply|donotreply)",
+            r"(mailinator|tempmail|10minutemail|guerrillamail|dispostable|trashmail|maildrop|yopmail|getnada|spamgourmet|sharklasers|mintemail|fenexy|mail.tm|emailtemporario|temporaryemail|throwawaymail)"
+        ]
+
+        for pattern in bot_patterns:
+            if re.search(pattern, email):
+                flash('This email is not allowed for registration.', 'danger')
+                return redirect(url_for('register_email'))
+
+        # Block repeated substring usernames (e.g., abcabcabc)
+        for i in range(1, len(local_part) // 2):
+            segment = local_part[:i]
+            repeat_count = len(local_part) // len(segment)
+            if segment * repeat_count == local_part:
+                flash('This email is not allowed for registration.', 'danger')
+                return redirect(url_for('register_email'))
+
+        # Already exists check
         if User.query.filter_by(email=email).first():
-            flash('Email is already registered. Please log in.', 'danger')
-            return redirect(url_for('login'))
+            flash('This email is not allowed for registration.', 'danger')
+            return redirect(url_for('register_email'))
 
+        # Repetition detection: Flag if too many similar usernames exist
+        prefix = re.sub(r'\d+$', '', local_part)  # base without trailing digits
+        if prefix:
+            similar_count = User.query.filter(
+                func.lower(User.email).like(f"{prefix.lower()}%@{domain}")
+            ).count()
+            if similar_count >= 3:
+                flash('This email is not allowed for registration.', 'danger')
+                return redirect(url_for('register_email'))
+
+        # Generate OTP
         otp = f"{random.randint(0, 999999):06d}"
         session['register_email'] = email
-        session['register_otp_hash'] = generate_password_hash(otp)
+        session['register_otp'] = otp
         session['register_otp_expiry'] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
         session['register_otp_attempts'] = 0
 
@@ -899,11 +937,7 @@ def register_email():
             recipients=[email],
             body=f"Your OTP is: {otp}\nIt expires in 5 minutes."
         )
-        try:
-            mail.send(msg)
-        except Exception as e:
-            flash("Failed to send email. Please try again later.", "danger")
-            return redirect(url_for('login'))
+        mail.send(msg)
 
         flash('OTP sent to your email.', 'info')
         return redirect(url_for('register_details'))
@@ -915,11 +949,11 @@ def register_email():
 def register_details():
     form = RegisterDetailsForm()
     email = session.get('register_email')
-    otp_hash = session.get('register_otp_hash')  # stored hash instead of raw OTP
+    otp = session.get('register_otp')
     expiry_str = session.get('register_otp_expiry')
     attempts = session.get('register_otp_attempts', 0)
 
-    if not email or not otp_hash or not expiry_str:
+    if not email or not otp or not expiry_str:
         flash('Session expired. Start again.', 'danger')
         return redirect(url_for('register_email'))
 
@@ -938,7 +972,7 @@ def register_details():
             session.clear()
             return redirect(url_for('register_email'))
 
-        if not check_password_hash(otp_hash, otp_input):
+        if otp_input != otp:
             session['register_otp_attempts'] = attempts + 1
             flash('Invalid OTP.', 'danger')
             return render_template('register_details.html', form=form, email=email)
@@ -951,9 +985,13 @@ def register_details():
             username=form.username.data.strip(),
             email=email,
             password=generate_password_hash(form.password.data),
-            role_id=1,
-            signup_method='email'
+            phone=form.phone.data.strip(),
+            birthdate=form.birthdate.data,
+            role_id=1
         )
+
+        new_user.security_question = form.security_question.data
+        new_user.security_answer_hash = generate_password_hash(form.security_answer.data.strip())
         db.session.add(new_user)
         db.session.commit()
 
@@ -962,9 +1000,6 @@ def register_details():
         return redirect(url_for('login'))
 
     return render_template('register_details.html', form=form, email=email)
-
-
-
 
 
 @app.route('/profile')
@@ -988,6 +1023,7 @@ def contact():
 
 @app.route('/change_username', methods=['GET', 'POST'])
 @login_required
+
 def change_username():
     from forms import ChangeUsernameForm
     form = ChangeUsernameForm()
@@ -1033,19 +1069,67 @@ def delete_account():
     form = DeleteAccountForm()
 
     if form.validate_on_submit():
+        user = db.session.get(User, current_user.id)
+
+        # Check password
+        if not check_password_hash(user.password, form.password.data):
+            flash("Incorrect password.", "danger")
+            return redirect(url_for('delete_account'))
+
+        # Check security answer
+        if not check_password_hash(user.security_answer_hash, form.security_answer.data.strip()):
+            flash("Incorrect security answer.", "danger")
+            return redirect(url_for('delete_account'))
+
         try:
-            user = db.session.get(User, current_user.id)  # Safely retrieve mapped instance
             logout_user()
             db.session.delete(user)
             db.session.commit()
             session.clear()
             flash('Account deleted successfully.', 'success')
             return redirect(url_for('login'))
+
         except Exception:
             db.session.rollback()
             flash('Failed to delete account. Please try again.', 'danger')
 
     return render_template('delete_account.html', form=form)
+
+@app.route('/force_password_reset', methods=['GET', 'POST'])
+def force_password_reset():
+    from forms import ForcePasswordResetForm
+    form = ForcePasswordResetForm()
+    user_id = session.get('expired_user_id')
+
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    error = None
+
+    if form.validate_on_submit():
+        from werkzeug.security import generate_password_hash, check_password_hash
+
+        if not check_password_hash(user.password, form.old_password.data):
+            error = 'Current password is incorrect.'
+        elif check_password_hash(user.password, form.new_password.data):
+            error = 'New password must be different from the old password.'
+        elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
+            error = 'You cannot reuse one of your last 3 passwords.'
+        else:
+            new_hash = generate_password_hash(form.new_password.data)
+            user.password = new_hash
+            user.password_last_changed = datetime.utcnow()
+            user.password_history.append(new_hash)
+            if len(user.password_history) > 3:
+                user.password_history = user.password_history[-3:]
+
+            db.session.commit()
+            session.pop('expired_user_id', None)
+            flash('Password updated successfully. Please log in.', 'success')
+            return redirect(url_for('login'))
+
+    return render_template('force_password_reset.html', form=form, error=error)
 
 if __name__ == '__main__':
     app.run(debug=True)

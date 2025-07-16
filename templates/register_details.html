@@ -1,7 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="container mt-5">
   <div class="col-md-5 mx-auto">
+
+        <!-- ✅ Flash messages block -->
+    <div class="container mt-3">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+              {{ message }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+    <!-- ✅ End flash block -->
+
     <h3 class="text-center mb-4">Complete Registration</h3>
     <p class="text-center">Email: {{ email }}</p>
     <form method="POST">
@@ -27,6 +44,40 @@
       </div>
 
       <div class="mb-3">
+        {{ form.phone.label(class="form-label") }} <small class="text-muted">(Optional)</small>
+        {{ form.phone(class="form-control") }}
+        {% for error in form.phone.errors %}
+          <div class="text-danger">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+
+
+      <div class="mb-3">
+        {{ form.birthdate.label(class="form-label") }}
+        {{ form.birthdate(class="form-control", type="date") }}
+        {% for error in form.birthdate.errors %}
+          <div class="text-danger">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="mb-3">
+        {{ form.security_question.label(class="form-label") }}
+        {{ form.security_question(class="form-select") }}
+      </div>
+
+      <div class="mb-3">
+        {{ form.security_answer.label(class="form-label") }}
+        {{ form.security_answer(class="form-control") }}
+        {% for error in form.security_answer.errors %}
+        <div class="text-danger">{{ error }}</div>
+      {% endfor %}
+      </div>
+
+
+
+
+      <div class="mb-3">
         {{ form.password.label(class="form-label") }}
         {{ form.password(class="form-control") }}
         {% for error in form.password.errors %}
@@ -42,29 +93,70 @@
         {% endfor %}
       </div>
 
+
+
+
       {{ form.submit(class="btn btn-dark w-100") }}
     </form>
-    {% if error %}
-  <div class="alert alert-danger mt-3 text-center">{{ error }}</div>
-    {% endif %}
-    {% if resent %}
-      <div class="alert alert-success mt-3 text-center">A new OTP has been sent.</div>
-    {% endif %}
   </div>
 </div>
-{% if wait_seconds %}
-  <div class="text-center text-muted mt-3">
-    You can request another OTP in <span id="countdown">{{ wait_seconds }}</span> seconds.
-  </div>
-  <script>
-    let remaining = {{ wait_seconds }};
-    const el = document.getElementById('countdown');
-    const interval = setInterval(() => {
-      remaining -= 1;
-      el.textContent = remaining;
-      if (remaining <= 0) clearInterval(interval);
-    }, 1000);
-  </script>
-{% endif %}
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/zxcvbn/4.4.2/zxcvbn.js"></script>
+<script>
+  const passwordInput = document.querySelector('#{{ form.password.id }}');
+  const feedbackBox = document.createElement('small');
+  passwordInput.parentNode.appendChild(feedbackBox);
+
+  let debounceTimer;
+
+  passwordInput.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const password = passwordInput.value;
+
+    // zxcvbn strength check
+    const result = zxcvbn(password);
+    const feedback = [
+      "Very Weak 🔴",
+      "Weak 🔴",
+      "Medium ⚠️",
+      "Strong ✅",
+      "Very Strong ✅"
+    ];
+    const score = result.score;
+    feedbackBox.textContent = `Strength: ${feedback[score]}`;
+    feedbackBox.style.color = score < 3 ? 'red' : 'green';
+
+    // Wait before running breach check
+    if (password.length > 5) {
+      debounceTimer = setTimeout(() => {
+        checkBreached(password);
+      }, 1000);
+    }
+  });
+
+  async function checkBreached(password) {
+    const sha1 = await sha1Hash(password);
+    const prefix = sha1.slice(0, 5);
+    const suffix = sha1.slice(5).toUpperCase();
+
+    const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+    const text = await response.text();
+
+    const found = text.split('\n').some(line => line.startsWith(suffix));
+    if (found) {
+      feedbackBox.textContent += " | ⚠️ This password has been found in a data breach!";
+      feedbackBox.style.color = 'red';
+    }
+  }
+
+  async function sha1Hash(str) {
+    const buffer = new TextEncoder().encode(str);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+</script>
+
+
 
 {% endblock %}
