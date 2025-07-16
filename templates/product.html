@@ -1,5 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>This is the product page</h1>
-
+<h1 class="text-center my-4">Our Products</h1>
+<div class="container">
+    <div class="row row-cols-1 row-cols-md-3 g-4">
+        {% for product in products_list %}
+        <div class="col">
+            <a href="{{ url_for('product_details', id=product.id) }}" class="text-decoration-none text-dark">
+                <div class="card h-100">
+                    {% if product.image %}
+                    <img src="{{ url_for('static', filename='uploads/' + product.image) }}" class="card-img-top" alt="{{ product.name }}">
+                    {% else %}
+                    <img src="https://via.placeholder.com/250" class="card-img-top" alt="{{ product.name }}">
+                    {% endif %}
+                    <div class="card-body text-center">
+                        <h5 class="card-title">{{ product.name }}</h5>
+                        <p class="card-text">${{ "%.2f"|format(product.price) }}</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
 {% endblock %}

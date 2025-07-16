@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container my-4">
+    <div class="row">
+        <!-- Product Image -->
+        <div class="col-md-6">
+            <img src="{{ url_for('static', filename='uploads/' + product.image) if product.image else 'https://via.placeholder.com/500' }}" class="img-fluid" alt="{{ product.name }}">
+        </div>
+
+        <!-- Product Info -->
+        <div class="col-md-6">
+            <h1>{{ product.name }}</h1>
+            <p class="h4 text-muted">${{ "%.2f"|format(product.price) }}</p>
+
+            <!-- Size Dropdown -->
+            <div class="mb-3">
+                <label for="size" class="form-label">Size:</label>
+                <select id="size" class="form-select">
+                    <option>Small</option>
+                    <option>Medium</option>
+                    <option>Large</option>
+                </select>
+            </div>
+
+            <!-- Tabs -->
+            <ul class="nav nav-tabs mt-4" id="detailTabs" role="tablist">
+                <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#desc">Description</button></li>
+                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#care">Care</button></li>
+                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#materials">Materials</button></li>
+            </ul>
+            <div class="tab-content mt-3">
+                <div class="tab-pane fade show active" id="desc">
+                    <p>{{ product.description }}</p>
+                </div>
+                <div class="tab-pane fade" id="care">
+                    <p>Gentle wash, do not bleach, line dry.</p>
+                </div>
+                <div class="tab-pane fade" id="materials">
+                    <p>100% Recycled Cotton</p>
+                </div>
+            </div>
+
+            <!-- Add to Cart -->
+            <button id="addToCart" class="btn btn-primary mt-4">
+                <i class="bi bi-cart-plus"></i> Add to Cart
+            </button>
+        </div>
+    </div>
+
+    <!-- Measurements -->
+    <div class="row mt-5">
+        <div class="col-12">
+            <h4>Product Measurements</h4>
+            <button id="toggleUnits" class="btn btn-outline-secondary mb-2">Switch to Inches</button>
+            <table class="table table-bordered text-center">
+                <thead>
+                    <tr><th>Size</th><th>Bust</th><th>Waist</th><th>Length</th></tr>
+                </thead>
+                <tbody id="measurements">
+                    <tr><td>Small</td><td>86 cm</td><td>72 cm</td><td>55 cm</td></tr>
+                    <tr><td>Medium</td><td>90 cm</td><td>76 cm</td><td>57 cm</td></tr>
+                    <tr><td>Large</td><td>94 cm</td><td>80 cm</td><td>59 cm</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Toggle between cm and inches
+    const toggleBtn = document.getElementById('toggleUnits');
+    const tableBody = document.getElementById('measurements');
+    let useInches = false;
+
+    toggleBtn?.addEventListener('click', () => {
+        useInches = !useInches;
+        toggleBtn.textContent = useInches ? "Switch to CM" : "Switch to Inches";
+        tableBody.innerHTML = useInches
+            ? `<tr><td>Small</td><td>33.9 in</td><td>28.3 in</td><td>21.7 in</td></tr>
+               <tr><td>Medium</td><td>35.4 in</td><td>29.9 in</td><td>22.4 in</td></tr>
+               <tr><td>Large</td><td>37.0 in</td><td>31.5 in</td><td>23.2 in</td></tr>`
+            : `<tr><td>Small</td><td>86 cm</td><td>72 cm</td><td>55 cm</td></tr>
+               <tr><td>Medium</td><td>90 cm</td><td>76 cm</td><td>57 cm</td></tr>
+               <tr><td>Large</td><td>94 cm</td><td>80 cm</td><td>59 cm</td></tr>`;
+    });
+
+    document.getElementById('addToCart')?.addEventListener('click', () => {
+        alert('Product added to cart!');
+    });
+</script>
+
+{% endblock %}

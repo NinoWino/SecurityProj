@@ -21,9 +21,19 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
 import requests
-
+from cryptography.fernet import Fernet
 
 load_dotenv()
+
+def load_fernet_key(path="fernet.key"):
+    try:
+        with open(path, "rb") as f:
+            key = f.read().strip()
+            return Fernet(key)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load Fernet key: {e}")
+
+fernet = load_fernet_key()
 
 app = Flask(__name__)
 # … your existing config …
@@ -264,6 +274,7 @@ def home():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
+
         return redirect(url_for('profile'))
 
     form = LoginForm()
@@ -272,8 +283,21 @@ def login():
     MAX_ATTEMPTS = 3
 
     if form.validate_on_submit():
-        stmt = select(User).filter_by(email=form.email.data.strip().lower())
-        user = db.session.scalars(stmt).first()
+        input_email = form.email.data.strip().lower()
+        print("Trying to match email:", input_email)
+
+        users = db.session.scalars(select(User)).all()
+        user = None
+        for u in users:
+            try:
+                decrypted = decrypt_value(u.email)
+                print("Decrypted email from DB:", decrypted)
+                if decrypted == input_email:
+                    print("✅ Match found!")
+                    user = u
+                    break
+            except Exception as e:
+                print("❌ Failed to decrypt:", u.email[:20], "Reason:", e)
 
         if user and user.signup_method.lower() != 'email':
             flash(f"This account was created using {user.signup_method.capitalize()}. Please use that login method.", "warning")
@@ -290,6 +314,11 @@ def login():
                     seconds_left = max(0, int(remaining.total_seconds()))
                     return render_template('login.html', form=form, error="Account locked. Please try again later.",
                                            lockout_seconds=seconds_left)
+
+            print("Checking password for user:", user.username)
+            print("User hashed pw in DB:", user.password)
+            print("Input password:", form.password.data)
+            print("Password match result:", check_password_hash(user.password, form.password.data))
 
             if check_password_hash(user.password, form.password.data):
                 location = get_location_data()
@@ -316,12 +345,13 @@ def login():
 
                     msg = Message(
                         subject="Your One-Time Login Code",
-                        recipients=[user.email],
+                        recipients=[decrypt_value(user.email)],
                         body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
                     )
                     try:
                         mail.send(msg)
-                    except Exception:
+                    except Exception as e:
+                        print("Mail send error:", e)
                         flash("Failed to send email. Please try again later.", "danger")
                         return redirect(url_for('login'))
 
@@ -329,6 +359,15 @@ def login():
 
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
+
+                try:
+                    session['decrypted_email'] = decrypt_value(user.email)
+                    session['decrypted_phone'] = decrypt_value(user.phone)
+                except Exception as e:
+                    print(f"Decryption failed: {e}")
+                    session['decrypted_email'] = "[Invalid Email]"
+                    session['decrypted_phone'] = "[Invalid Phone]"
+
                 user.failed_attempts = 0
                 db.session.commit()
                 send_login_alert_email(user)
@@ -981,11 +1020,15 @@ def register_details():
             form.username.errors.append('Username already taken.')
             return render_template('register_details.html', form=form, email=email)
 
+        email = session.get('register_email')  # ✅ email from session
+        email_encrypted = encrypt_value(email.strip()) if email else None
+        phone_encrypted = encrypt_value(form.phone.data.strip())
+
         new_user = User(
             username=form.username.data.strip(),
-            email=email,
+            email=email_encrypted,
             password=generate_password_hash(form.password.data),
-            phone=form.phone.data.strip(),
+            phone=phone_encrypted,
             birthdate=form.birthdate.data,
             role_id=1
         )
@@ -1005,7 +1048,14 @@ def register_details():
 @app.route('/profile')
 @login_required
 def profile():
-    return render_template('profile.html')
+    email = session.get('decrypted_email')
+    phone = session.get('decrypted_phone')
+    print("🔍 Profile - Email from session:", email)
+    print("🔍 Profile - Phone from session:", phone)
+
+    return render_template('profile.html',
+                           email=email,
+                           phone=phone)
 
 
 @app.route('/product')
@@ -1130,6 +1180,17 @@ def force_password_reset():
             return redirect(url_for('login'))
 
     return render_template('force_password_reset.html', form=form, error=error)
+
+
+def encrypt_value(value: str) -> str:
+    return fernet.encrypt(value.encode()).decode()
+
+def decrypt_value(value: str) -> str:
+    try:
+        return fernet.decrypt(value.encode()).decode()
+    except Exception as e:
+        print(f"Decryption error: {e}")
+        return "[Invalid]"
 
 if __name__ == '__main__':
     app.run(debug=True)

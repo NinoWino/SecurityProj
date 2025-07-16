@@ -1,4 +1,5 @@
 {% extends "profile_security_sidebar.html" %}
+
 {% block profile_content %}
 <div class="card shadow-sm">
   <div class="card-header bg-dark text-white">
@@ -13,11 +14,11 @@
       </tr>
       <tr>
         <th>Email</th>
-        <td>{{ current_user.email }}</td>
+        <td>{{ email or "Not available" }}</td>
       </tr>
       <tr>
         <th>Phone</th>
-        <td>{{ current_user.phone }}</td>
+        <td>{{ phone or "Not available" }}</td>
       </tr>
       <tr>
         <th>Birthdate</th>
