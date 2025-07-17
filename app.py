@@ -354,24 +354,24 @@ def login():
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor_totp'))
 
-                # if user.two_factor_enabled:
-                #     session['pre_2fa_user_id'] = user.id
-                #     code = f"{random.randint(0, 999999):06d}"
-                #     user.otp_code = generate_password_hash(code)
-                #     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-                #     db.session.commit()
-                #
-                #     try:
-                #         mail.send(Message(
-                #             subject="Your One-Time Login Code",
-                #             recipients=[user.email],
-                #             body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
-                #         ))
-                #     except Exception:
-                #         flash("Failed to send OTP. Try again later.", "danger")
-                #         return redirect(url_for('login'))
-                #
-                #     return redirect(url_for('two_factor'))
+                if user.two_factor_enabled:
+                    session['pre_2fa_user_id'] = user.id
+                    code = f"{random.randint(0, 999999):06d}"
+                    user.otp_code = generate_password_hash(code)
+                    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                    db.session.commit()
+
+                    try:
+                        mail.send(Message(
+                            subject="Your One-Time Login Code",
+                            recipients=[user.email],
+                            body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
+                        ))
+                    except Exception:
+                        flash("Failed to send OTP. Try again later.", "danger")
+                        return redirect(url_for('login'))
+
+                    return redirect(url_for('two_factor'))
 
                 # Successful login
                 login_user(user)
@@ -392,7 +392,7 @@ def login():
                         device_hash=device_hash,
                         ip_address=ip,
                         user_agent=user_agent,
-                        location=location
+                        location=location_str
                     ))
                 db.session.commit()
 
@@ -415,7 +415,7 @@ def login():
             success=success,
             ip_address=ip,
             user_agent=user_agent,
-            location=location
+            location=location_str
         ))
         db.session.commit()
 
@@ -1291,7 +1291,6 @@ def change_email():
 @app.route('/delete_account', methods=['GET', 'POST'])
 @login_required
 def delete_account():
-    from forms import DeleteAccountForm
     form = DeleteAccountForm()
 
     if form.validate_on_submit():
@@ -1361,5 +1360,6 @@ def force_password_reset():
 def forbidden(error):
     return render_template('403.html'), 403
 
+print(generate_password_hash('test123'))
 if __name__ == '__main__':
     app.run(debug=True)
