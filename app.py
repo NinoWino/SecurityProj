@@ -381,18 +381,31 @@ def login():
                 success = True
                 send_login_alert_email(user)
 
+                #log location
+                _, location_str, _ = get_ip_and_location()
+                db.session.add(LoginAuditLog(
+                    user_id=user.id,
+                    email=user.email,
+                    success=True,
+                    ip_address=ip,
+                    user_agent=user_agent,
+                    location=location_str
+                ))
+                db.session.commit()
+
                 # Track known devices
                 device_hash = generate_device_hash(ip, user_agent)
                 known_device = KnownDevice.query.filter_by(user_id=user.id, device_hash=device_hash).first()
                 if known_device:
                     known_device.last_seen = datetime.utcnow()
                 else:
+                    _, location_str, _ = get_ip_and_location()
                     db.session.add(KnownDevice(
                         user_id=user.id,
                         device_hash=device_hash,
                         ip_address=ip,
                         user_agent=user_agent,
-                        location=location
+                        location=location_str
                     ))
                 db.session.commit()
 
@@ -409,13 +422,14 @@ def login():
             error = 'Email not found.'
 
         # Log the attempt
+        _, location_str, _ = get_ip_and_location()
         db.session.add(LoginAuditLog(
             user_id=user_id,
             email=email,
             success=success,
             ip_address=ip,
             user_agent=user_agent,
-            location=location
+            location = location_str
         ))
         db.session.commit()
 
@@ -1197,13 +1211,6 @@ def edit_user(user_id):
         return redirect(url_for('manage_users'))
 
     return render_template('admin_user_form.html', action='Edit', user=user)
-
-@app.route('/admin/users')
-@login_required
-@role_required(3)
-def admin_manage_users():
-    users = User.query.all()
-    return render_template('admin_users.html', users=users)
 
 @app.route('/admin/user/<int:user_id>/toggle')
 @login_required
