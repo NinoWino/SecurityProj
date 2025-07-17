@@ -2,9 +2,18 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from sqlalchemy import PickleType, DateTime
 from datetime import datetime
+from functools import wraps
+from flask import abort
+from flask_login import current_user
 
 db = SQLAlchemy()
 
+
+class Role(db.Model):
+    __tablename__ = 'roles'
+    id   = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(20), unique=True, nullable=False)
+    users = db.relationship('User', back_populates='role')
 
 class User(UserMixin, db.Model):
     __tablename__ = 'user'
@@ -18,14 +27,12 @@ class User(UserMixin, db.Model):
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     role = db.relationship('Role', back_populates='users')
 
-
-
     # Lockout & 2FA
     failed_attempts    = db.Column(db.Integer, default=0)
     last_failed_login  = db.Column(db.DateTime, nullable=True)
     is_locked          = db.Column(db.Boolean, default=False)
     two_factor_enabled = db.Column(db.Boolean, default=True)
-    otp_code           = db.Column(db.String(255), nullable=True)
+    otp_code           = db.Column(db.String(512), nullable=True)
     otp_expiry         = db.Column(db.DateTime, nullable=True)
     totp_secret = db.Column(db.String(32), nullable=True)
     preferred_2fa = db.Column(db.String(10), default='email')
@@ -39,10 +46,64 @@ class User(UserMixin, db.Model):
 
     security_question = db.Column(db.String(255), nullable=True)
     security_answer_hash = db.Column(db.String(255), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
 
-class Role(db.Model):
-    __tablename__ = 'roles'
-    id   = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(20), unique=True, nullable=False)
+    #Audit
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    users = db.relationship('User', back_populates='role')
+class LoginAuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=True)
+    email = db.Column(db.String(100))
+    success = db.Column(db.Boolean)
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    location = db.Column(db.String(255))
+    timestamp = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+
+class SystemAuditLog(db.Model):
+    __tablename__ = 'system_audit_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    action_type = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    location = db.Column(db.String(255))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref='system_logs')
+
+class KnownDevice(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
+    device_hash = db.Column(db.String(255))
+    user_agent = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
+    location = db.Column(db.String(255))
+    first_seen = db.Column(db.DateTime, server_default=db.func.current_timestamp())
+    last_seen = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
+# Role IDs correspond to hierarchy levels:
+# 1 = user (lowest), 2 = staff, 3 = admin (highest)
+ROLE_HIERARCHY = {
+    1: 1,  # user
+    2: 2,  # staff
+    3: 3   # admin
+}
+
+def role_required(*allowed_role_ids):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not current_user.is_authenticated:
+                abort(403)
+            user_level = ROLE_HIERARCHY.get(current_user.role_id, 0)
+            allowed_levels = [ROLE_HIERARCHY.get(rid, 0) for rid in allowed_role_ids]
+            if any(user_level >= level for level in allowed_levels):
+                return f(*args, **kwargs)
+            else:
+                abort(403)
+        return decorated_function
+    return decorator
