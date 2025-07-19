@@ -647,11 +647,25 @@ def two_factor():
             user.otp_expiry = None
             db.session.commit()
 
-            send_login_alert_email(user)  # ✅ send only after OTP success
+            # ✅ Add audit log here
+            ip, location_str, _ = get_ip_and_location()
+            user_agent = request.headers.get('User-Agent')
+            db.session.add(LoginAuditLog(
+                user_id=user.id,
+                email=user.email,
+                success=True,
+                ip_address=ip,
+                user_agent=user_agent,
+                location=location_str
+            ))
+            db.session.commit()
+
+            send_login_alert_email(user)
             return redirect(url_for('profile'))
 
     resent = bool(request.args.get('resent'))
     return render_template('two_factor.html', form=form, error=error, resent=resent)
+
 
 @app.route('/resend_otp/<context>')
 def resend_otp(context):
@@ -852,7 +866,6 @@ def two_factor_totp():
     user = db.session.get(User, user_id)
     totp = pyotp.TOTP(user.totp_secret)
 
-    # Lockout after 3 failed attempts
     attempts = session.get('totp_otp_attempts', 0)
     if attempts >= 3:
         flash('Too many failed attempts. Please log in again.', 'danger')
@@ -871,6 +884,20 @@ def two_factor_totp():
             user.otp_code = None
             user.otp_expiry = None
             db.session.commit()
+
+            # ✅ Add audit log here
+            ip, location_str, _ = get_ip_and_location()
+            user_agent = request.headers.get('User-Agent')
+            db.session.add(LoginAuditLog(
+                user_id=user.id,
+                email=user.email,
+                success=True,
+                ip_address=ip,
+                user_agent=user_agent,
+                location=location_str
+            ))
+            db.session.commit()
+
             send_login_alert_email(user)
             return redirect(url_for('profile'))
         else:
@@ -878,6 +905,7 @@ def two_factor_totp():
             error = 'Invalid code. Please try again.'
 
     return render_template('two_factor_totp.html', form=form, error=error)
+
 
 
 @app.route('/authenticator/start')
