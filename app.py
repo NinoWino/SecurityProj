@@ -85,7 +85,7 @@ def get_ip_and_location():
         ip_response = requests.get('https://api.ipify.org?format=json', timeout=3)
         ip = ip_response.json().get('ip')
 
-        loc_response = requests.get(f'https://ipapi.co/{ip}/json/', timeout=3)
+        loc_response = requests.get(f'https://ipwhois.app/json/{ip}', timeout=3)
         loc_data = loc_response.json()
 
         city = loc_data.get('city', '')
@@ -354,24 +354,24 @@ def login():
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor_totp'))
 
-                # if user.two_factor_enabled:
-                #     session['pre_2fa_user_id'] = user.id
-                #     code = f"{random.randint(0, 999999):06d}"
-                #     user.otp_code = generate_password_hash(code)
-                #     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-                #     db.session.commit()
-                #
-                #     try:
-                #         mail.send(Message(
-                #             subject="Your One-Time Login Code",
-                #             recipients=[user.email],
-                #             body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
-                #         ))
-                #     except Exception:
-                #         flash("Failed to send OTP. Try again later.", "danger")
-                #         return redirect(url_for('login'))
-                #
-                #     return redirect(url_for('two_factor'))
+                if user.two_factor_enabled:
+                    session['pre_2fa_user_id'] = user.id
+                    code = f"{random.randint(0, 999999):06d}"
+                    user.otp_code = generate_password_hash(code)
+                    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                    db.session.commit()
+
+                    try:
+                        mail.send(Message(
+                            subject="Your One-Time Login Code",
+                            recipients=[user.email],
+                            body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
+                        ))
+                    except Exception:
+                        flash("Failed to send OTP. Try again later.", "danger")
+                        return redirect(url_for('login'))
+
+                    return redirect(url_for('two_factor'))
 
                 # Successful login
                 login_user(user)
@@ -608,7 +608,7 @@ def toggle_2fa():
         else:
             current_user.two_factor_enabled = True
             current_user.preferred_2fa = 'email'
-            current_user.totp_secret = None  # ✅ disable authenticator app
+            current_user.totp_secret = None  # disable authenticator app
         db.session.commit()
     return redirect(url_for('security'))
 
