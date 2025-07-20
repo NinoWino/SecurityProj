@@ -75,6 +75,12 @@ google = oauth.register(
     }
 )
 
+def load_disposable_domains():
+    with open('disposable_domains.txt', 'r') as f:
+        return set(line.strip().lower() for line in f if line.strip())
+
+DISPOSABLE_DOMAINS = load_disposable_domains()
+
 # Device hash generator for device recognition
 def generate_device_hash(ip, user_agent):
     return sha256(f"{ip}_{user_agent}".encode()).hexdigest()
@@ -1005,14 +1011,8 @@ def register_email():
         local_part = email.split('@')[0]
         domain = email.split('@')[1]
 
-        disposable_domains = [
-            "mailinator.com", "tempmail.com", "10minutemail.com", "guerrillamail.com",
-            "trashmail.com", "maildrop.cc", "yopmail.com", "getnada.com", "sharklasers.com",
-            "spamgourmet.com", "mintemail.com", "fenexy.com", "mail.tm",
-            "emailtemporario.com", "temporaryemail.com", "throwawaymail.com", "mytaemin.com"
-        ]
-        if domain in disposable_domains:
-            flash('This email is not allowed for registration.', 'danger')
+        if domain in DISPOSABLE_DOMAINS:
+            flash(f"The domain '{domain}' is a known temporary email provider and is not allowed.", 'danger')
             return redirect(url_for('register_email'))
 
         # Bot and disposable email patterns
@@ -1024,7 +1024,7 @@ def register_email():
 
         for pattern in bot_patterns:
             if re.search(pattern, email):
-                flash('This email is not allowed for registration.', 'danger')
+                flash('Suspicious email pattern detected. Please use a real, personal email address.', 'danger')
                 return redirect(url_for('register_email'))
 
         # Block repeated substring usernames (e.g., abcabcabc)
@@ -1032,12 +1032,12 @@ def register_email():
             segment = local_part[:i]
             repeat_count = len(local_part) // len(segment)
             if segment * repeat_count == local_part:
-                flash('This email is not allowed for registration.', 'danger')
+                flash('Email username appears to be artificially repeated. Please use a real email', 'danger')
                 return redirect(url_for('register_email'))
 
         # Already exists check
         if User.query.filter_by(email=email).first():
-            flash('This email is not allowed for registration.', 'danger')
+            flash('This email is already registered.', 'danger')
             return redirect(url_for('register_email'))
 
         # Repetition detection: Flag if too many similar usernames exist
@@ -1047,7 +1047,7 @@ def register_email():
                 func.lower(User.email).like(f"{prefix.lower()}%@{domain}")
             ).count()
             if similar_count >= 3:
-                flash('This email is not allowed for registration.', 'danger')
+                flash('Too many similar usernames have registered using this email pattern. Try a different email', 'danger')
                 return redirect(url_for('register_email'))
 
         # Generate OTP
