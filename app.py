@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort , g
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 from flask_login import (
@@ -22,7 +22,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
 import requests
-
+import uuid
+import json
 
 load_dotenv()
 
@@ -75,6 +76,7 @@ google = oauth.register(
     }
 )
 
+
 # Device hash generator for device recognition
 def generate_device_hash(ip, user_agent):
     return sha256(f"{ip}_{user_agent}".encode()).hexdigest()
@@ -100,20 +102,56 @@ def get_ip_and_location():
 
 
 # System Audit Log
-def log_system_action(user_id, action_type, description=None):
-    ip, location = get_ip_and_location()
-    user_agent = request.headers.get('User-Agent')
 
-    log = SystemAuditLog(
-        user_id=user_id,
-        action_type=action_type,
-        description=description,
-        ip_address=ip,
-        user_agent=user_agent,
-        location=location
-    )
-    db.session.add(log)
-    db.session.commit()
+def log_system_action(
+    user_id,
+    action_type,
+    description=None,
+    log_level='INFO',
+    category='GENERAL',
+    affected_object_id=None,
+    changed_fields=None
+):
+    try:
+        print(f"[DEBUG] log_system_action CALLED: {action_type}, user={user_id}")
+        ip, location,_ = get_ip_and_location()
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        endpoint = request.endpoint
+        http_method = request.method
+        session_id = session.get('session_id')
+
+        # ✅ Add these lines
+        request_id = getattr(g, 'request_id', None)
+        role_id = current_user.role_id if current_user.is_authenticated else None
+
+        # Store changes as JSON if provided as dict
+        if isinstance(changed_fields, dict):
+            changed_fields = json.dumps(changed_fields)
+
+        log = SystemAuditLog(
+            user_id=user_id,
+            action_type=action_type,
+            description=description,
+            log_level=log_level,
+            category=category,
+            endpoint=endpoint,
+            http_method=http_method,
+            session_id=session_id,
+            affected_object_id=affected_object_id,
+            changed_fields=changed_fields,
+            ip_address=ip,
+            user_agent=user_agent,
+            location=location,
+            role_id_at_action_time = role_id,
+            request_id = request_id
+        )
+        db.session.add(log)
+        db.session.commit()
+        print("[DEBUG] log_system_action COMMIT OK")
+    except Exception as e:
+        print(f"[AuditLog Error] Failed to log action '{action_type}':", e)
+
+
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -145,10 +183,23 @@ limiter = Limiter(
 # @app.errorhandler(Exception)
 # def handle_unexpected_error(e):
 #     return render_template('error.html', message="An unexpected error occurred."), 500
+#
+# @login_manager.user_loader
+# def load_user(user_id):
+#     return db.session.get(User, int(user_id))
 
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    print(f"[USER LOADER] Trying to load user_id: {user_id}")
+    try:
+        user = db.session.get(User, int(user_id))
+        if not user:
+            print(f"[USER LOADER] No user found for ID {user_id}")
+        return user
+    except Exception as e:
+        print(f"[USER LOADER] Error loading user {user_id}: {e}")
+        return None
+
 
 @login_manager.unauthorized_handler
 def on_unauthorized():
@@ -208,7 +259,15 @@ def get_device_info(user_agent_string):
 
 
 @app.before_request
+def track_session():
+    print(f"[SESSION FULL DEBUG] session: {dict(session)}")
+    print(f"[SESSION DEBUG] session_id: {session.get('session_id')}, current_user: {current_user.get_id()}")
 def check_session_timeout():
+    # Assign unique session ID if not present
+    if 'session_id' not in session:
+        import uuid
+        session['session_id'] = str(uuid.uuid4())
+
     if current_user.is_authenticated:
         now = datetime.utcnow()
         last_active = session.get('last_active')
@@ -289,6 +348,10 @@ def enforce_rate_limit(limit_string, key_prefix, error_message="Too many request
     except RateLimitExceeded:
         return error_message, wait_seconds
 
+def assign_session_and_request_id():
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+    g.request_id = str(uuid.uuid4())
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -313,8 +376,8 @@ def login():
     MAX_ATTEMPTS = 3
     ip, location_str, location_data = get_ip_and_location()
     user_agent = request.headers.get('User-Agent')
-    success = False
     user = None
+    success = False
 
     if form.validate_on_submit():
         email = form.email.data.strip().lower()
@@ -322,14 +385,13 @@ def login():
         user = db.session.scalars(stmt).first()
         user_id = user.id if user else None
 
-        # Region block for social login accounts
         if user and (user.signup_method or '').lower() != 'email':
             method = (user.signup_method or 'another method').capitalize()
             flash(f"Login method mismatch. Use {method} instead.", "warning")
             return redirect(url_for('login'))
 
         if user:
-            # Account lockout check
+            # Lockout check
             if user.is_locked:
                 if user.last_failed_login and datetime.utcnow() - user.last_failed_login >= LOCK_DURATION:
                     user.failed_attempts = 0
@@ -344,6 +406,14 @@ def login():
                 current_country = location_data.get('country')
                 if user.region_lock_enabled:
                     if user.last_country and user.last_country != current_country:
+                        # ❗ Optional: log region mismatch
+                        log_system_action(
+                            user_id=user.id,
+                            action_type="Login Blocked",
+                            description=f"Region mismatch. Expected {user.last_country}, got {current_country}.",
+                            category="AUTH",
+                            log_level="WARNING"
+                        )
                         flash(f"Region mismatch. Expected {user.last_country}, got {current_country}.", "danger")
                         return redirect(url_for('login'))
                     elif not user.last_country:
@@ -373,16 +443,15 @@ def login():
 
                     return redirect(url_for('two_factor'))
 
-                # Successful login
+                # ✅ Successful login
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
                 user.failed_attempts = 0
                 db.session.commit()
-                success = True
                 send_login_alert_email(user)
+                success = True
 
-                #log location
-                _, location_str, _ = get_ip_and_location()
+                # Log login success
                 db.session.add(LoginAuditLog(
                     user_id=user.id,
                     email=user.email,
@@ -391,7 +460,13 @@ def login():
                     user_agent=user_agent,
                     location=location_str
                 ))
-                db.session.commit()
+
+                log_system_action(
+                    user_id=user.id,
+                    action_type="Login",
+                    description="User successfully logged in via email.",
+                    category="AUTH"
+                )
 
                 # Track known devices
                 device_hash = generate_device_hash(ip, user_agent)
@@ -399,7 +474,6 @@ def login():
                 if known_device:
                     known_device.last_seen = datetime.utcnow()
                 else:
-                    _, location_str, _ = get_ip_and_location()
                     db.session.add(KnownDevice(
                         user_id=user.id,
                         device_hash=device_hash,
@@ -407,31 +481,47 @@ def login():
                         user_agent=user_agent,
                         location=location_str
                     ))
-                db.session.commit()
 
+                db.session.commit()
                 return redirect(url_for('profile'))
 
-            # Failed login attempt
+            # ❌ Failed login
             user.failed_attempts += 1
             user.last_failed_login = datetime.utcnow()
             if user.failed_attempts >= MAX_ATTEMPTS:
                 user.is_locked = True
             db.session.commit()
             error = 'Incorrect email or password.'
-        else:
-            error = 'Email not found.'
 
-        # Log the attempt
-        _, location_str, _ = get_ip_and_location()
-        db.session.add(LoginAuditLog(
-            user_id=user_id,
-            email=email,
-            success=success,
-            ip_address=ip,
-            user_agent=user_agent,
-            location = location_str
-        ))
-        db.session.commit()
+            # Log failed login
+            db.session.add(LoginAuditLog(
+                user_id=user.id,
+                email=user.email,
+                success=False,
+                ip_address=ip,
+                user_agent=user_agent,
+                location=location_str
+            ))
+            log_system_action(
+                user_id=user.id,
+                action_type="Login Failed",
+                description="Failed login attempt due to incorrect credentials.",
+                category="AUTH",
+                log_level="WARNING"
+            )
+            db.session.commit()
+        else:
+            # Unknown email — log only to LoginAuditLog (no user_id)
+            db.session.add(LoginAuditLog(
+                user_id=None,
+                email=email,
+                success=False,
+                ip_address=ip,
+                user_agent=user_agent,
+                location=location_str
+            ))
+            db.session.commit()
+            error = 'Email not found.'
 
     return render_template('login.html', form=form, error=error, message=request.args.get('message'))
 
@@ -485,6 +575,7 @@ def auth_callback():
             )
             db.session.add(user)
             db.session.commit()
+
         except Exception:
             db.session.rollback()
             flash("Account creation via Google failed.", "danger")
@@ -506,6 +597,14 @@ def auth_callback():
     session['last_active'] = datetime.utcnow().isoformat()
 
     send_login_alert_email(user)
+
+    # ✅ Log the login
+    log_system_action(
+        user_id=user.id,
+        action_type="Login (Google)",
+        description="User successfully logged in via Google.",
+        category="AUTH"
+    )
 
     return redirect(url_for('profile'))
 
@@ -535,6 +634,13 @@ def change_password():
             # Hash and save the new password
             current_user.password = generate_password_hash(form.new_password.data)
             db.session.commit()
+
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Password Change",
+                description="User changed their password",
+                category="SECURITY"
+            )
 
             # Invalidate session and force re-login
             logout_user()
@@ -603,14 +709,34 @@ def forgot_password():
 def toggle_2fa():
     form = Toggle2FAForm()
     if form.validate_on_submit():
+        original_value = current_user.two_factor_enabled
+
         if current_user.two_factor_enabled:
             current_user.two_factor_enabled = False
         else:
             current_user.two_factor_enabled = True
             current_user.preferred_2fa = 'email'
             current_user.totp_secret = None  # disable authenticator app
+
         db.session.commit()
+
+        # ✅ Log the change with session_id and other metadata
+        log_system_action(
+            user_id=current_user.id,
+            action_type="2FA Toggled",
+            description=f"2FA is now {'enabled' if current_user.two_factor_enabled else 'disabled'}",
+            category="SECURITY",
+            affected_object_id=current_user.id,
+            changed_fields={
+                "two_factor_enabled": [original_value, current_user.two_factor_enabled]
+            },
+            session_id=session.get('session_id'),
+            role_id_at_action_time=getattr(current_user, 'role_id', None),
+            request_id=request.headers.get('X-Request-ID')  # Optional: if you're tracking it
+        )
+
     return redirect(url_for('security'))
+
 
 
 @app.route('/two_factor', methods=['GET', 'POST'])
@@ -794,6 +920,12 @@ def verify_reset_otp():
             user.otp_code = None
             user.otp_expiry = None
             db.session.commit()
+            log_system_action(
+                user_id=user.id,
+                action_type="Password Reset",
+                description="User reset password via email OTP",
+                category="SECURITY"
+            )
             session.pop('reset_user_id', None)
             session.pop('reset_otp_attempts', None)
             return redirect(url_for('login', message='pw_changed'))
@@ -842,6 +974,14 @@ def setup_totp_step3():
             current_user.preferred_2fa = 'totp'
             current_user.two_factor_enabled = False
             db.session.commit()
+
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Authenticator Setup",
+                description="User set up authenticator app (TOTP)",
+                category="SECURITY"
+            )
+
             return redirect(url_for('setup_totp_done'))
         else:
             error = "Invalid code. Try again."
@@ -920,6 +1060,12 @@ def disable_totp():
     current_user.totp_secret = None
     current_user.preferred_2fa = 'email'
     db.session.commit()
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Authenticator Disabled",
+        description="User disabled TOTP 2FA",
+        category="SECURITY"
+    )
     flash("Authenticator App has been disabled.", "info")
     return redirect(url_for('security'))
 
@@ -937,6 +1083,12 @@ def fallback_to_email_otp():
     user.otp_code = generate_password_hash(code)
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     db.session.commit()
+    log_system_action(
+        user_id=user.id,
+        action_type="2FA Fallback to Email",
+        description="User switched from TOTP to email OTP for login",
+        category="AUTH"
+    )
 
     msg = Message(
         subject="Backup Login Code",
@@ -966,7 +1118,8 @@ def security():
 @app.route('/toggle_region_lock', methods=['POST'])
 @login_required
 def toggle_region_lock():
-    current_user.region_lock_enabled = not current_user.region_lock_enabled
+    original_value = current_user.region_lock_enabled
+    current_user.region_lock_enabled = not original_value
 
     message = ""
     if current_user.region_lock_enabled:
@@ -979,6 +1132,22 @@ def toggle_region_lock():
         message = "Region lock disabled."
 
     db.session.commit()
+
+    # ✅ Log the change with session_id and other metadata
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Region Lock Toggled",
+        description=message,
+        category="SECURITY",
+        affected_object_id=current_user.id,
+        changed_fields={
+            "region_lock_enabled": [original_value, current_user.region_lock_enabled]
+        },
+        session_id=session.get('session_id'),
+        role_id_at_action_time=getattr(current_user, 'role_id', None),
+        request_id=request.headers.get('X-Request-ID')  # Optional: for traceability
+    )
+
     flash(message, "info")
     return redirect(url_for('security'))
 
@@ -1209,18 +1378,42 @@ def manage_users():
 @role_required(3)
 def add_user():
     if request.method == 'POST':
-        username = request.form['username']
-        email = request.form['email']
-        password = generate_password_hash(request.form['password'])
-        role_id = int(request.form['role_id'])
+        try:
+            username = request.form['username'].strip()
+            email = request.form['email'].strip()
+            password = request.form['password']
+            role_id = int(request.form['role_id'])
 
-        new_user = User(username=username, email=email, password=password, role_id=role_id)
-        db.session.add(new_user)
-        db.session.commit()
-        flash('New user added.', 'success')
-        return redirect(url_for('manage_users'))
+            # ✅ Create and hash password using model's method (preferred)
+            new_user = User(username=username, email=email, role_id=role_id)
+            new_user.set_password(password)
+
+            db.session.add(new_user)
+            db.session.commit()
+
+            # ✅ Audit log with all initial fields
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Admin Add User",
+                description=f"Created new user: {email}",
+                category="ADMIN",
+                affected_object_id=new_user.id,
+                changed_fields={
+                    "username": [None, username],
+                    "email": [None, email],
+                    "role_id": [None, role_id]
+                }
+            )
+
+            flash('New user added.', 'success')
+            return redirect(url_for('manage_users'))
+
+        except Exception:
+            db.session.rollback()
+            flash('Failed to add new user.', 'danger')
 
     return render_template('admin_user_form.html', action='Add')
+
 
 @app.route('/admin/user/<int:user_id>/edit', methods=['GET', 'POST'])
 @login_required
@@ -1229,13 +1422,40 @@ def edit_user(user_id):
     user = User.query.get_or_404(user_id)
 
     if request.method == 'POST':
-        user.username = request.form['username']
-        user.email = request.form['email']
+        # ✅ Snapshot original values before applying changes
+        original_data = {
+            "username": user.username,
+            "email": user.email,
+            "role_id": user.role_id
+        }
+
+        # ✅ Apply new values from form
+        user.username = request.form['username'].strip()
+        user.email = request.form['email'].strip()
         user.role_id = int(request.form['role_id'])
-        if request.form['password']:
-            user.password = generate_password_hash(request.form['password'])
-        db.session.commit()
-        flash('User updated.', 'success')
+
+        # ✅ Detect changes before committing
+        changed = detect_changes(user, original_data, ["username", "email", "role_id"])
+
+        try:
+            db.session.commit()
+
+            # ✅ Only log if something actually changed
+            if changed:
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="Admin Edit User",
+                    description=f"Edited user ID {user.id}",
+                    category="ADMIN",
+                    affected_object_id=user.id,
+                    changed_fields=changed
+                )
+
+            flash('User updated.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash("Failed to update user. Please try again.", "danger")
+
         return redirect(url_for('manage_users'))
 
     return render_template('admin_user_form.html', action='Edit', user=user)
@@ -1245,46 +1465,138 @@ def edit_user(user_id):
 @role_required(3)
 def toggle_user_activation(user_id):
     user = User.query.get_or_404(user_id)
-    user.is_active = not user.is_active
+    original_status = user.is_active
+    user.is_active = not original_status
     db.session.commit()
+
+    # ✅ Log the change
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Admin Toggled User Activation",
+        description=f"{user.username} is now {'active' if user.is_active else 'deactivated'}",
+        category="ADMIN",
+        affected_object_id=user.id,
+        changed_fields={
+            "is_active": [original_status, user.is_active]
+        }
+    )
+
     flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
     return redirect(url_for('manage_users'))
 
-@app.route('/admin/security_dashboard')
-@login_required
+@app.route('/security_dashboard')
 @role_required(3)
 def security_dashboard():
-    logs_query = LoginAuditLog.query
+    # --- LOGIN AUDIT LOG FILTERS ---
+    login_query = LoginAuditLog.query
+    email = request.args.get('email')
+    login_user_id = request.args.get('login_user_id')
+    success = request.args.get('success')
+    location = request.args.get('location')
+    ip_address = request.args.get('ip')
+    user_agent = request.args.get('user_agent')
+    login_start_date = request.args.get('login_start_date')
+    login_end_date = request.args.get('login_end_date')
 
-    # Get filter values from request
-    email_filter = request.args.get('email')
-    location_filter = request.args.get('location')
-    success_filter = request.args.get('success')
+    if email:
+        login_query = login_query.filter(LoginAuditLog.email == email)
 
-    if email_filter:
-        logs_query = logs_query.filter(LoginAuditLog.email == email_filter)
-    if location_filter:
-        logs_query = logs_query.filter(LoginAuditLog.location == location_filter)
-    if success_filter in ['0', '1']:
-        logs_query = logs_query.filter(LoginAuditLog.success == bool(int(success_filter)))
+    if login_user_id and login_user_id.isdigit():
+        login_query = login_query.filter(LoginAuditLog.user_id == int(login_user_id))
 
-    logs = logs_query.order_by(LoginAuditLog.timestamp.desc()).limit(50).all()
-    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(50).all()
+    if success in ['0', '1']:
+        login_query = login_query.filter(LoginAuditLog.success == (success == '1'))
 
-    # ✨ Fetch unique filter values
-    emails = [e[0] for e in db.session.query(LoginAuditLog.email).distinct().all()]
-    locations = [l[0] for l in db.session.query(LoginAuditLog.location).distinct().all()]
+    if location:
+        login_query = login_query.filter(LoginAuditLog.location == location)
 
-    return render_template('security_dashboard.html', logs=logs, devices=devices,
-                           emails=emails, locations=locations)
+    if ip_address:
+        login_query = login_query.filter(LoginAuditLog.ip_address.like(f"%{ip_address}%"))
+
+    if user_agent:
+        login_query = login_query.filter(LoginAuditLog.user_agent.ilike(f"%{user_agent}%"))
+
+    if login_start_date:
+        try:
+            start_dt = datetime.strptime(login_start_date, "%Y-%m-%d")
+            login_query = login_query.filter(LoginAuditLog.timestamp >= start_dt)
+        except ValueError as e:
+            print("Start date parsing error:", e)
+
+    if login_end_date:
+        try:
+            end_dt = datetime.strptime(login_end_date, "%Y-%m-%d") + timedelta(days=1)
+            login_query = login_query.filter(LoginAuditLog.timestamp < end_dt)
+        except ValueError as e:
+            print("End date parsing error:", e)
+
+    login_logs = login_query.order_by(LoginAuditLog.timestamp.desc()).limit(100).all()
+
+    # --- SYSTEM AUDIT LOG FILTERS ---
+    audit_query = SystemAuditLog.query
+
+    user_id = request.args.get('user_id')
+    action_type = request.args.get('action_type')
+    category = request.args.get('category')
+    log_level = request.args.get('log_level')
+    audit_start_date = request.args.get('audit_start_date')
+    audit_end_date = request.args.get('audit_end_date')
+
+    if user_id and user_id.isdigit():
+        audit_query = audit_query.filter(SystemAuditLog.user_id == int(user_id))
+
+    if action_type:
+        audit_query = audit_query.filter_by(action_type=action_type)
+
+    if category:
+        audit_query = audit_query.filter_by(category=category)
+
+    if log_level:
+        audit_query = audit_query.filter_by(log_level=log_level)
+
+    if audit_start_date:
+        try:
+            audit_start_dt = datetime.strptime(audit_start_date, "%Y-%m-%d")
+            audit_query = audit_query.filter(SystemAuditLog.timestamp >= audit_start_dt)
+        except ValueError as e:
+            print("Audit start date error:", e)
+
+    if audit_end_date:
+        try:
+            audit_end_dt = datetime.strptime(audit_end_date, "%Y-%m-%d") + timedelta(days=1)
+            audit_query = audit_query.filter(SystemAuditLog.timestamp < audit_end_dt)
+        except ValueError as e:
+            print("Audit end date error:", e)
+
+    audit_logs = audit_query.order_by(SystemAuditLog.timestamp.desc()).limit(200).all()
+
+    # --- DROPDOWNS ---
+    user_ids = [user.id for user in db.session.query(User.id).distinct().order_by(User.id).all()]
+    emails = [row.email for row in db.session.query(LoginAuditLog.email).distinct() if row.email]
+    locations = [row.location for row in db.session.query(LoginAuditLog.location).distinct() if row.location]
+    action_types = [row.action_type for row in db.session.query(SystemAuditLog.action_type).distinct() if row.action_type]
+    categories = [row.category for row in db.session.query(SystemAuditLog.category).distinct() if row.category]
+
+    # --- KNOWN DEVICES ---
+    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(100).all()
+
+    return render_template(
+        'security_dashboard.html',
+        logs=login_logs,
+        emails=emails,
+        locations=locations,
+        devices=devices,
+        audit_logs=audit_logs,
+        action_types=action_types,
+        categories=categories,
+        user_ids=user_ids,
+    )
 
 @app.route('/contact')
 def contact():
     return render_template('contact.html')
-
 @app.route('/change_username', methods=['GET', 'POST'])
 @login_required
-
 def change_username():
     from forms import ChangeUsernameForm
     form = ChangeUsernameForm()
@@ -1292,16 +1604,40 @@ def change_username():
 
     if form.validate_on_submit():
         try:
+            # ✅ Snapshot original data
+            original_data = {
+                "username": current_user.username
+            }
+
+            # ✅ Apply change
             current_user.username = form.new_username.data.strip()
+
+            # ✅ Detect what changed
+            changed = detect_changes(current_user, original_data, ["username"])
+
             db.session.commit()
+
+            # ✅ Only log if a change actually occurred
+            if changed:
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="Username Change",
+                    description=f"User changed their username",
+                    category="PROFILE",
+                    affected_object_id=current_user.id,
+                    changed_fields=changed
+                )
+
             flash('Username changed successfully.', 'success')
             return redirect(url_for('profile'))
+
         except Exception:
             db.session.rollback()
             error = 'Failed to update username. Please try again.'
             flash(error, 'danger')
 
     return render_template('change_username.html', form=form, error=error)
+
 
 @app.route('/change_email', methods=['GET', 'POST'])
 @login_required
@@ -1312,8 +1648,18 @@ def change_email():
 
     if form.validate_on_submit():
         try:
+            old_email = current_user.email
             current_user.email = form.new_email.data.strip()
             db.session.commit()
+
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Email Change",
+                description=f"Changed email from {old_email} to {current_user.email}",
+                category="PROFILE",
+                changed_fields={"email": [old_email, current_user.email]}
+            )
+
             flash('Email changed successfully.', 'success')
             return redirect(url_for('profile'))
         except Exception:
@@ -1322,6 +1668,7 @@ def change_email():
             flash(error, 'danger')
 
     return render_template('change_email.html', form=form, error=error)
+
 
 @app.route('/delete_account', methods=['GET', 'POST'])
 @login_required
@@ -1332,17 +1679,28 @@ def delete_account():
     if form.validate_on_submit():
         user = db.session.get(User, current_user.id)
 
-        # Check password
         if not check_password_hash(user.password, form.password.data):
             flash("Incorrect password.", "danger")
             return redirect(url_for('delete_account'))
 
-        # Check security answer
         if not check_password_hash(user.security_answer_hash, form.security_answer.data.strip()):
             flash("Incorrect security answer.", "danger")
             return redirect(url_for('delete_account'))
 
         try:
+            log_system_action(
+                user_id=user.id,
+                action_type="Account Deletion",
+                description="User deleted their account.",
+                category="SECURITY",
+                affected_object_id=user.id,
+                changed_fields={
+                    "account_status": ["active", "deleted"],
+                    "username": user.username,
+                    "email": user.email
+                }
+            )
+
             logout_user()
             db.session.delete(user)
             db.session.commit()
@@ -1355,6 +1713,7 @@ def delete_account():
             flash('Failed to delete account. Please try again.', 'danger')
 
     return render_template('delete_account.html', form=form)
+
 
 @app.route('/force_password_reset', methods=['GET', 'POST'])
 def force_password_reset():
@@ -1378,6 +1737,8 @@ def force_password_reset():
         elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
             error = 'You cannot reuse one of your last 3 passwords.'
         else:
+            old_hash = user.password
+
             new_hash = generate_password_hash(form.new_password.data)
             user.password = new_hash
             user.password_last_changed = datetime.utcnow()
@@ -1386,15 +1747,38 @@ def force_password_reset():
                 user.password_history = user.password_history[-3:]
 
             db.session.commit()
+
+            log_system_action(
+                user_id=user.id,
+                action_type="Forced Password Reset",
+                description="User reset password after expiration.",
+                category="SECURITY",
+                changed_fields={"password": ["previous_hash", "new_hash_truncated"]}
+            )
+
             session.pop('expired_user_id', None)
             flash('Password updated successfully. Please log in.', 'success')
             return redirect(url_for('login'))
 
     return render_template('force_password_reset.html', form=form, error=error)
 
+
 @app.errorhandler(403)
 def forbidden(error):
-    return render_template('403.html'), 403
+    return render_template('403.html'),
+
+def detect_changes(obj, original_data, fields):
+    """
+    Compare original_data (dict of field -> old_value) to current values on obj.
+    Returns a dict of changed fields: field_name -> [old, new]
+    """
+    changes = {}
+    for field in fields:
+        old = original_data.get(field)
+        new = getattr(obj, field, None)
+        if old != new:
+            changes[field] = [old, new]
+    return changes
 
 if __name__ == '__main__':
     app.run(debug=True)

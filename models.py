@@ -68,11 +68,19 @@ class SystemAuditLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     action_type = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text, nullable=True)
+    role_id_at_action_time = db.Column(db.Integer, nullable=True)
+    request_id = db.Column(db.String(64), nullable=True)
+    log_level = db.Column(db.String(20), default='INFO')           # INFO, WARNING, ERROR
+    category = db.Column(db.String(50), default='GENERAL')         # AUTH, ADMIN, PROFILE, SECURITY, etc.
+    endpoint = db.Column(db.String(255))                           # Flask route
+    http_method = db.Column(db.String(10))                         # GET, POST, etc.
+    session_id = db.Column(db.String(64), nullable=True)           # Generated per session
+    affected_object_id = db.Column(db.String(64), nullable=True)   # Optional: e.g., User ID being edited
+    changed_fields = db.Column(db.Text, nullable=True)             # JSON or string of changes
     ip_address = db.Column(db.String(45))
     user_agent = db.Column(db.Text)
     location = db.Column(db.String(255))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
     user = db.relationship('User', backref='system_logs')
 
 class KnownDevice(db.Model):
