@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-5">
+  <h2>{{ product.name }}</h2>
+  <p class="text-muted">${{ product.price }}</p>
+  <p>{{ product.description }}</p>
+
+  {% if product.image_url %}
+  <img src="{{ product.image_url }}" class="img-fluid mb-3">
+  {% endif %}
+
+<button class="btn btn-success add-to-cart"
+        data-id="{{ product.id }}"
+        data-name="{{ product.name }}"
+        data-price="{{ product.price }}">
+  Add to Cart
+</button>
+  <a href="/checkout" class="btn btn-outline-primary ms-2">Checkout</a>
+</div>
+{% endblock %}

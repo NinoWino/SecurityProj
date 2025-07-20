@@ -22,6 +22,11 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
 import requests
+from models import Product  # at the top with other imports
+from forms import ProductForm
+import os
+from werkzeug.utils import secure_filename
+import os
 
 
 load_dotenv()
@@ -36,6 +41,11 @@ app.config.update({
     'MAIL_PASSWORD': os.getenv('MAIL_PASSWORD'),
     'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
 })
+
+# Ensure upload folder exists
+UPLOAD_FOLDER = os.path.join(os.getcwd(), 'static', 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
 mail = Mail(app)
@@ -1133,10 +1143,142 @@ def profile():
     return render_template('profile.html')
 
 
-@app.route('/product')
+@app.route('/products')
 @login_required
-def product():
-    return render_template('product.html')
+def products():
+    items = Product.query.all()
+    return render_template('product.html', products=items)
+
+@app.route('/product/<int:product_id>')
+@login_required
+def view_product(product_id):
+    item = Product.query.get_or_404(product_id)
+    return render_template('product_detail.html', product=item)
+
+
+@app.route('/admin/products', methods=['GET', 'POST'])
+@login_required
+@role_required('admin')
+def manage_products():
+    form = ProductForm()
+    products = Product.query.order_by(Product.created_at.desc()).all()
+
+    if form.validate_on_submit():
+        image = form.image.data
+        filename = None
+
+        if image:
+            # Make sure the upload folder exists
+            upload_folder = os.path.join(app.root_path, 'static/uploads')
+            os.makedirs(upload_folder, exist_ok=True)
+
+            # Secure and save the file
+            filename = secure_filename(image.filename)
+            image.save(os.path.join(upload_folder, filename))
+
+        # Create product with uploaded image filename
+        new_product = Product(
+            name=form.name.data,
+            price=form.price.data,
+            description=form.description.data,
+            image_filename=filename
+        )
+        db.session.add(new_product)
+        db.session.commit()
+        flash('Product added successfully!', 'success')
+        return redirect(url_for('manage_products'))
+
+    return render_template('admin_products.html', form=form, products=products)
+
+@app.route('/admin/products/delete/<int:id>', methods=['POST'])
+@login_required
+@role_required('admin')
+def delete_product(id):
+    product = Product.query.get_or_404(id)
+
+    # Delete image file from /static/uploads if it exists
+    if product.image_filename:
+        image_path = os.path.join(app.root_path, 'static/uploads', product.image_filename)
+        if os.path.exists(image_path):
+            os.remove(image_path)
+
+    db.session.delete(product)
+    db.session.commit()
+    flash('Product deleted successfully.', 'success')
+    return redirect(url_for('manage_products'))
+
+@app.route('/checkout')
+@login_required
+def checkout():
+    return render_template('checkout.html')
+
+
+@app.route('/invoice', methods=['POST'])
+@login_required
+def invoice():
+    return redirect(url_for('invoice_ready'))
+
+@app.route('/invoice_ready')
+@login_required
+def invoice_ready():
+    user = current_user
+    email_prefix = user.email.split('@')[0]
+    birthdate = user.birthdate.strftime('%Y%m%d')
+    password_hint = f"{email_prefix}{birthdate}"  # This is the actual password
+
+    return render_template("invoice_ready.html", password_hint=password_hint)
+
+
+
+from fpdf import FPDF
+from PyPDF2 import PdfReader, PdfWriter
+from flask import make_response
+from io import BytesIO
+
+@app.route('/download_invoice')
+@login_required
+def download_invoice():
+    user = current_user
+    email_prefix = user.email.split('@')[0]
+    birthdate = user.birthdate.strftime('%Y%m%d')
+    password = f"{email_prefix}{birthdate}"
+
+    cart = session.get('cart', [])
+    total = sum(item['price'] * item['qty'] for item in cart)
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Invoice", ln=True, align='C')
+    pdf.ln(10)
+    pdf.cell(200, 10, txt=f"Name: {user.username}", ln=True)
+    pdf.cell(200, 10, txt=f"Email: {user.email}", ln=True)
+    pdf.cell(200, 10, txt=f"Birthdate: {user.birthdate}", ln=True)
+    pdf.ln(5)
+    pdf.cell(200, 10, txt="Items:", ln=True)
+
+    for item in cart:
+        line = f"- {item['name']} x{item['qty']} = ${item['price'] * item['qty']:.2f}"
+        pdf.cell(200, 10, txt=line, ln=True)
+
+    pdf.ln(5)
+    pdf.cell(200, 10, txt=f"Total: ${total:.2f}", ln=True)
+
+    # Encrypt
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    reader = PdfReader(BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    writer.append_pages_from_reader(reader)
+    writer.encrypt(user_pwd=password)
+
+    encrypted_pdf = BytesIO()
+    writer.write(encrypted_pdf)
+    encrypted_pdf.seek(0)
+
+    response = make_response(encrypted_pdf.read())
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = 'attachment; filename=invoice.pdf'
+    return response
 
 @app.route('/stafflogin')
 def stafflogin():
