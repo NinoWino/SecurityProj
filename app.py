@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 from flask_login import (
@@ -27,6 +27,11 @@ from forms import ProductForm
 import os
 from werkzeug.utils import secure_filename
 import os
+from fpdf import FPDF
+from PyPDF2 import PdfReader, PdfWriter
+from flask import make_response
+from io import BytesIO
+
 
 
 load_dotenv()
@@ -1120,7 +1125,7 @@ def register_details():
             username=form.username.data.strip(),
             email=email,
             password=generate_password_hash(form.password.data),
-            phone=form.phone.data.strip(),
+            phone=form.phone.data.strip() or None   ,
             birthdate=form.birthdate.data,
             role_id=1
         )
@@ -1209,7 +1214,6 @@ def delete_product(id):
 @app.route('/save_cart', methods=['POST'])
 @login_required
 def save_cart():
-    from flask import jsonify
     data = request.get_json()
 
     # Optional: validate the structure of each cart item
@@ -1268,13 +1272,6 @@ def invoice_ready():
     password_hint = f"{email_prefix}{birthdate}"  # This is the actual password
 
     return render_template("invoice_ready.html", password_hint=password_hint)
-
-
-
-from fpdf import FPDF
-from PyPDF2 import PdfReader, PdfWriter
-from flask import make_response
-from io import BytesIO
 
 @app.route('/download_invoice')
 @login_required
