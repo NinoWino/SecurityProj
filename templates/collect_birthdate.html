@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="container mt-5 col-md-5 mx-auto">
+    <div class="card shadow-sm">
+      <div class="card-header bg-dark text-white">
+        <h3 class="mb-0">Almost done!</h3>
+      </div>
+      <div class="card-body">
+        <p>Please enter your birthdate so we can complete your profile.</p>
+        <form method="POST">
+          {{ form.hidden_tag() }}
+          <div class="mb-3">
+            {{ form.birthdate.label(class="form-label") }}
+            {{ form.birthdate(class="form-control") }}
+            {% for err in form.birthdate.errors %}
+              <div class="text-danger">{{ err }}</div>
+            {% endfor %}
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Save</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}

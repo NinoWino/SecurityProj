@@ -7,6 +7,7 @@ from flask_login import current_user
 from zxcvbn import zxcvbn
 import hashlib
 import requests
+from datetime import date
 
 def validate_pwned_password(field):
     sha1 = hashlib.sha1(field.data.encode('utf-8')).hexdigest().upper()
@@ -94,38 +95,33 @@ class ResetPasswordForm(FlaskForm):
                 "Password is too weak. Use at least 8 characters, with uppercase, lowercase, numbers, and symbols.")
         validate_pwned_password(field)
 
-# ✅ Original RegisterForm (used in old /register route, now deprecated)
-# class RegisterForm(FlaskForm):
-#     username = StringField('Username', validators=[
-#         DataRequired(),
-#         Length(min=3, max=25, message="Username must be 3-25 characters.")
-#     ])
-#     email = StringField('Email', validators=[
-#         DataRequired(), Email(message="Enter a valid email.")
-#     ])
-#     password = PasswordField('Password', validators=[
-#         DataRequired(),
-#         Length(min=8, message='At least 8 characters.')
-#     ])
-#     confirm_password = PasswordField('Confirm Password', validators=[
-#         DataRequired(),
-#         EqualTo('password', message='Passwords must match.')
-#     ])
-#     recaptcha = RecaptchaField()
-#     submit = SubmitField('Register')
-#
-#     # Duplicate checks
-#     def validate_email(self, field):
-#         from models import User
-#         if User.query.filter_by(email=field.data).first():
-#             raise ValidationError('Email is already registered.')
-#
-#     def validate_username(self, field):
-#         from models import User
-#         if User.query.filter_by(username=field.data).first():
-#             raise ValidationError('Username is already taken.')
 
-# ✅ New Forms for Two-Step Registration
+class BirthdateForm(FlaskForm):
+    birthdate = DateField(
+        'Birthdate (YYYY-MM-DD)',
+        format='%Y-%m-%d',
+        validators=[DataRequired()]
+    )
+    submit = SubmitField('Save')
+
+    def validate_birthdate(self, field):
+        today = date.today()
+        bd = field.data
+
+        # 1) No future dates
+        if bd > today:
+            raise ValidationError("Birthdate cannot be in the future.")
+
+        # 2) Minimum age (e.g. 13 years)
+        min_age_years = 13
+        age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+        if age < min_age_years:
+            raise ValidationError(f"You must be at least {min_age_years} years old.")
+
+        # 3) Optional: very old dates (e.g. >120 years ago)
+        if age > 120:
+            raise ValidationError("That date seems too far in the past.")
+
 
 class EmailForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Email()])

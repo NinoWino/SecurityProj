@@ -8,7 +8,7 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User, SystemAuditLog, KnownDevice, role_required, LoginAuditLog
 from hashlib import sha256
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm, BirthdateForm, ChangeEmailForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -86,12 +86,10 @@ google = oauth.register(
     client_secret=app.config['GOOGLE_CLIENT_SECRET'],
     server_metadata_url=app.config['GOOGLE_DISCOVERY_URL'],
     client_kwargs={
-        'scope': (
-            'openid email profile '
-            'https://www.googleapis.com/auth/user.birthday.read'
-        )
+        'scope': 'openid email profile'
     }
 )
+
 def load_disposable_domains():
     with open('disposable_domains.txt', 'r') as f:
         return set(line.strip().lower() for line in f if line.strip())
@@ -500,50 +498,87 @@ def auth_callback():
         flash("Email not available from Google account.", "danger")
         return redirect(url_for('login'))
 
+    # 1) Lookup by email
     stmt = select(User).filter_by(email=email)
     user = db.session.scalars(stmt).first()
 
-    if user:
-        signup_method = user.signup_method or 'another method'
-        if signup_method.lower() != 'google':
-            flash(f"This email is registered {signup_method.capitalize()}. Please use the correct login option.",
-                  "warning")
-            return redirect(url_for('login'))
+    # 2) Block non-Google signup methods
+    if user and (user.signup_method or '').lower() != 'google':
+        flash(
+          f"This email is registered via {user.signup_method.capitalize()}. Please use that method.",
+          "warning"
+        )
+        return redirect(url_for('login'))
 
+    # 3) First‐time creation: default 2FA off
     if not user:
-        try:
-            user = User(
-                username=user_info.get('name') or email.split('@')[0],
-                email=email,
-                password=generate_password_hash(os.urandom(16).hex()),
-                role_id=1,
-                signup_method = 'google'
-            )
-            db.session.add(user)
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            flash("Account creation via Google failed.", "danger")
-            return redirect(url_for('login'))
+        user = User(
+            username         = user_info.get('name') or email.split('@')[0],
+            email            = email,
+            password         = generate_password_hash(os.urandom(16).hex()),
+            role_id          = 1,
+            signup_method    = 'google',
+            two_factor_enabled = False
+        )
+        db.session.add(user)
+        db.session.commit()
 
-    location = get_location_data()
-    country = location.get('country')
-
+    # ── Region Lock (unchanged) ─────────────────────────────────
+    country = get_location_data().get('country')
     if user.region_lock_enabled:
         if user.last_country and user.last_country != country:
-            flash(f"Login blocked: region mismatch. Expected {user.last_country}, got {country}.", "danger")
+            flash(
+              f"Login blocked: region mismatch. Expected {user.last_country}, got {country}.",
+              "danger"
+            )
             return redirect(url_for('login'))
-        elif not user.last_country:
+        if not user.last_country:
             user.last_country = country
             db.session.commit()
 
-    # ✅ Finalize login
+    # ── TOTP 2FA ───────────────────────────────────────────────
+    if user.preferred_2fa == 'totp' and user.totp_secret:
+        session['pre_2fa_user_id'] = user.id
+        return redirect(url_for('two_factor_totp'))
+
+    # ── Email-OTP 2FA ─────────────────────────────────────────
+    if user.two_factor_enabled:
+        session['pre_2fa_user_id'] = user.id
+        code = f"{random.randint(0, 999999):06d}"
+        user.otp_code   = generate_password_hash(code)
+        user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+        db.session.commit()
+        mail.send(Message(
+            subject   = "Your One-Time Login Code",
+            recipients= [user.email],
+            body      = f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
+        ))
+        return redirect(url_for('two_factor'))
+
+    # ── Final login ───────────────────────────────────────────
     login_user(user)
     session['last_active'] = datetime.utcnow().isoformat()
-
     send_login_alert_email(user)
 
+    # Prompt for birthdate if missing
+    if not user.birthdate:
+        return redirect(url_for('collect_birthdate'))
+
     return redirect(url_for('profile'))
+
+
+
+
+@app.route('/collect_birthdate', methods=['GET','POST'])
+@login_required
+def collect_birthdate():
+    form = BirthdateForm()
+    if form.validate_on_submit():
+        current_user.birthdate = form.birthdate.data
+        db.session.commit()
+        flash('Thanks, your birthdate has been saved.', 'success')
+        return redirect(url_for('profile'))
+    return render_template('collect_birthdate.html', form=form)
 
 @app.route('/logout')
 @login_required
@@ -1507,13 +1542,21 @@ def change_username():
 @app.route('/change_email', methods=['GET', 'POST'])
 @login_required
 def change_email():
-    from forms import ChangeEmailForm
+    if (current_user.signup_method or 'email').lower() != 'email':
+        flash(
+            "You cannot change your email address because you signed up via "
+            f"{current_user.signup_method.capitalize()}.",
+            "warning"
+        )
+        return redirect(url_for('profile'))
+
     form = ChangeEmailForm()
     error = None
 
     if form.validate_on_submit():
         try:
-            current_user.email = form.new_email.data.strip()
+            # normalize to lowercase to avoid dupes
+            current_user.email = form.new_email.data.strip().lower()
             db.session.commit()
             flash('Email changed successfully.', 'success')
             return redirect(url_for('profile'))
