@@ -1125,7 +1125,7 @@ def register_details():
             username=form.username.data.strip(),
             email=email,
             password=generate_password_hash(form.password.data),
-            phone=form.phone.data.strip() or None   ,
+            phone=form.phone.data.strip() or None,
             birthdate=form.birthdate.data,
             role_id=1
         )
