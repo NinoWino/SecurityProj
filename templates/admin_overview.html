@@ -4,9 +4,11 @@
   <meta charset="UTF-8">
   <title>Admin Overview</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     .card {
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      cursor: pointer;
     }
   </style>
 </head>
@@ -16,61 +18,174 @@
   <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary mb-4">Back to Admin Panel</a>
 
   <div class="row g-4">
+    <!-- TOTAL USERS -->
     <div class="col-md-4">
-      <div class="card text-bg-primary">
+      <div class="card text-bg-primary" data-bs-toggle="collapse" data-bs-target="#allUsersCollapse" style="cursor:pointer;">
         <div class="card-body">
           <h5 class="card-title">Total Registered Users</h5>
           <p class="card-text display-6">{{ total_users }}</p>
         </div>
       </div>
+      <div class="collapse mt-2" id="allUsersCollapse">
+        <div class="card card-body">
+          <h6>All Users (Max 100)</h6>
+          <ul class="list-group">
+            {% for user in all_users %}
+              <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
+            {% else %}
+              <li class="list-group-item">No users found.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
+    <!-- ACTIVE TODAY -->
     <div class="col-md-4">
-      <div class="card text-bg-success">
+      <div class="card text-bg-success" data-bs-toggle="collapse" data-bs-target="#activeUsersCollapse" style="cursor:pointer;">
         <div class="card-body">
           <h5 class="card-title">Active Today</h5>
           <p class="card-text display-6">{{ active_today }}</p>
         </div>
       </div>
+      <div class="collapse mt-2" id="activeUsersCollapse">
+        <div class="card card-body">
+          <h6>Active Users (Past 24h)</h6>
+          <ul class="list-group">
+            {% for user in active_users %}
+              <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
+            {% else %}
+              <li class="list-group-item">No active users.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
+    <!-- NEW SIGNUPS -->
     <div class="col-md-4">
-      <div class="card text-bg-info">
+      <div class="card text-bg-info" data-bs-toggle="collapse" data-bs-target="#newSignupsCollapse" style="cursor:pointer;">
         <div class="card-body">
           <h5 class="card-title">New Signups (24h)</h5>
           <p class="card-text display-6">{{ new_signups }}</p>
         </div>
       </div>
+      <div class="collapse mt-2" id="newSignupsCollapse">
+        <div class="card card-body">
+          <h6>New Users (Past 24h)</h6>
+          <ul class="list-group">
+            {% for user in recent_users %}
+              <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
+            {% else %}
+              <li class="list-group-item">No new users.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
+    <!-- SUCCESSFUL LOGINS -->
     <div class="col-md-4">
-      <div class="card text-bg-success">
+      <div class="card text-bg-success" data-bs-toggle="collapse" data-bs-target="#successfulLoginsCollapse" style="cursor:pointer;">
         <div class="card-body">
           <h5 class="card-title">Successful Logins (24h)</h5>
           <p class="card-text display-6">{{ successful_logins_24h }}</p>
         </div>
       </div>
+      <div class="collapse mt-2" id="successfulLoginsCollapse">
+        <div class="card card-body">
+          <h6>Recent Successful Logins</h6>
+          <ul class="list-group">
+            {% for log in recent_successful_logins %}
+              <li class="list-group-item">{{ log.email }} — IP: {{ log.ip_address }} — {{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</li>
+            {% else %}
+              <li class="list-group-item">No successful logins found.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
+    <!-- FAILED LOGINS -->
     <div class="col-md-4">
-      <div class="card text-bg-danger">
+      <div class="card text-bg-danger" data-bs-toggle="collapse" data-bs-target="#failedLoginsCollapse" style="cursor:pointer;">
         <div class="card-body">
           <h5 class="card-title">Failed Login Attempts (24h)</h5>
           <p class="card-text display-6">{{ failed_logins_24h }}</p>
         </div>
       </div>
+      <div class="collapse mt-2" id="failedLoginsCollapse">
+        <div class="card card-body">
+          <h6>Recent Failed Logins</h6>
+          <ul class="list-group">
+            {% for log in recent_failed_logins %}
+              <li class="list-group-item">{{ log.email }} — IP: {{ log.ip_address }} — {{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</li>
+            {% else %}
+              <li class="list-group-item">No failed login attempts.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
-
+    <!-- DEACTIVATED ACCOUNTS -->
     <div class="col-md-4">
-      <div class="card text-bg-danger">
+      <div class="card text-bg-danger" data-bs-toggle="collapse" data-bs-target="#deactivatedUsersCollapse" style="cursor:pointer;">
         <div class="card-body">
           <h5 class="card-title">Deactivated Accounts</h5>
           <p class="card-text display-6">{{ deactivated_accounts }}</p>
         </div>
       </div>
+      <div class="collapse mt-2" id="deactivatedUsersCollapse">
+        <div class="card card-body">
+          <h6>Deactivated Users</h6>
+          <ul class="list-group">
+            {% for user in deactivated_users %}
+              <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
+            {% else %}
+              <li class="list-group-item">No deactivated users.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
   </div>
+
+  <div class="mt-5">
+    <h4>Top 5 IPs with Failed Login Attempts (24h)</h4>
+    <canvas id="ipChart" height="150"></canvas>
+  </div>
 </div>
+
+<!-- Required JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  const ctx = document.getElementById('ipChart').getContext('2d');
+  const ipChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: {{ top_failed_ips | map(attribute=0) | list | tojson }},
+      datasets: [{
+        label: 'Failed Logins',
+        data: {{ top_failed_ips | map(attribute=1) | list | tojson }},
+        backgroundColor: 'rgba(255, 99, 132, 0.7)',
+        borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: 'Attempts' }
+        },
+        x: {
+          title: { display: true, text: 'IP Address' }
+        }
+      }
+    }
+  });
+</script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort , g
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select
+from sqlalchemy import select, func
 from flask_login import (
     LoginManager, login_user, logout_user,
     login_required, current_user
@@ -26,6 +26,8 @@ import uuid
 import json
 
 load_dotenv()
+
+
 
 app = Flask(__name__)
 # … your existing config …
@@ -60,7 +62,7 @@ app.permanent_session_lifetime = timedelta(minutes=30)
 app.config.update({
     "SESSION_COOKIE_HTTPONLY": True,
     "SESSION_COOKIE_SAMESITE": "Lax",
-    "SESSION_COOKIE_SECURE": True
+    "SESSION_COOKIE_SECURE": False
 })
 
 db.init_app(app)
@@ -99,59 +101,6 @@ def get_ip_and_location():
     except Exception as e:
         print("GeoIP fetch failed:", e)
         return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
-
-
-# System Audit Log
-
-def log_system_action(
-    user_id,
-    action_type,
-    description=None,
-    log_level='INFO',
-    category='GENERAL',
-    affected_object_id=None,
-    changed_fields=None
-):
-    try:
-        print(f"[DEBUG] log_system_action CALLED: {action_type}, user={user_id}")
-        ip, location,_ = get_ip_and_location()
-        user_agent = request.headers.get('User-Agent', 'Unknown')
-        endpoint = request.endpoint
-        http_method = request.method
-        session_id = session.get('session_id')
-
-        # ✅ Add these lines
-        request_id = getattr(g, 'request_id', None)
-        role_id = current_user.role_id if current_user.is_authenticated else None
-
-        # Store changes as JSON if provided as dict
-        if isinstance(changed_fields, dict):
-            changed_fields = json.dumps(changed_fields)
-
-        log = SystemAuditLog(
-            user_id=user_id,
-            action_type=action_type,
-            description=description,
-            log_level=log_level,
-            category=category,
-            endpoint=endpoint,
-            http_method=http_method,
-            session_id=session_id,
-            affected_object_id=affected_object_id,
-            changed_fields=changed_fields,
-            ip_address=ip,
-            user_agent=user_agent,
-            location=location,
-            role_id_at_action_time = role_id,
-            request_id = request_id
-        )
-        db.session.add(log)
-        db.session.commit()
-        print("[DEBUG] log_system_action COMMIT OK")
-    except Exception as e:
-        print(f"[AuditLog Error] Failed to log action '{action_type}':", e)
-
-
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -262,6 +211,7 @@ def get_device_info(user_agent_string):
 def track_session():
     print(f"[SESSION FULL DEBUG] session: {dict(session)}")
     print(f"[SESSION DEBUG] session_id: {session.get('session_id')}, current_user: {current_user.get_id()}")
+    check_session_timeout()
 def check_session_timeout():
     # Assign unique session ID if not present
     if 'session_id' not in session:
@@ -360,6 +310,59 @@ def assign_session_and_request_id():
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# System Audit Log
+
+def log_system_action(
+    user_id,
+    action_type,
+    description=None,
+    log_level='INFO',
+    category='GENERAL',
+    affected_object_id=None,
+    changed_fields=None,
+    session_id=None,
+    role_id_at_action_time=None,
+    request_id=None
+):
+    try:
+        print(f"[DEBUG] log_system_action CALLED: {action_type}, user={user_id}")
+        ip, location,_ = get_ip_and_location()
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        endpoint = request.endpoint
+        http_method = request.method
+        session_id = session_id or session.get('session_id')
+
+        # ✅ Add these lines
+        request_id = request_id or getattr(g, 'request_id', None)
+        role_id = role_id_at_action_time or (current_user.role_id if current_user.is_authenticated else None)
+
+        # Store changes as JSON if provided as dict
+        if isinstance(changed_fields, dict):
+            changed_fields = json.dumps(changed_fields)
+
+        log = SystemAuditLog(
+            user_id=user_id,
+            action_type=action_type,
+            description=description,
+            log_level=log_level,
+            category=category,
+            endpoint=endpoint,
+            http_method=http_method,
+            session_id=session_id,
+            affected_object_id=affected_object_id,
+            changed_fields=changed_fields,
+            ip_address=ip,
+            user_agent=user_agent,
+            location=location,
+            role_id_at_action_time = role_id,
+            request_id = request_id
+        )
+        db.session.add(log)
+        db.session.commit()
+        print("[DEBUG] log_system_action COMMIT OK")
+    except Exception as e:
+        print(f"[AuditLog Error] Failed to log action '{action_type}':", e)
 
 @app.route('/')
 def home():
@@ -1327,9 +1330,19 @@ def admin_dashboard():
 @login_required
 @role_required(3)
 def admin_overview():
+
     utc_now = datetime.utcnow()
     day_ago = utc_now - timedelta(days=1)
-
+    # Top 5 IPs with failed login attempts in the last 24 hours
+    top_failed_ips = db.session.query(
+        LoginAuditLog.ip_address,
+        func.count(LoginAuditLog.id)
+    ).filter(
+        LoginAuditLog.timestamp >= day_ago,
+        LoginAuditLog.success == False
+    ).group_by(LoginAuditLog.ip_address
+               ).order_by(func.count(LoginAuditLog.id).desc()
+                          ).limit(5).all()
     total_users = User.query.count()
     new_signups = User.query.filter(User.created_at >= day_ago).count()
     successful_logins_24h = LoginAuditLog.query.filter(
@@ -1344,6 +1357,31 @@ def admin_overview():
 
     deactivated_accounts = User.query.filter_by(is_active=False).count()
     active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
+    # Get actual active users in the last 24h
+    active_user_ids = db.session.query(LoginAuditLog.user_id).filter(
+        LoginAuditLog.success == True,
+        LoginAuditLog.timestamp >= day_ago,
+        LoginAuditLog.user_id != None
+    ).distinct().subquery()
+
+    active_users = db.session.query(User).filter(User.id.in_(active_user_ids)).all()
+
+    recent_users = User.query.filter(User.created_at >= day_ago).order_by(User.created_at.desc()).limit(10).all()
+
+    recent_failed_logins = LoginAuditLog.query.filter(
+        LoginAuditLog.success == False,
+        LoginAuditLog.timestamp >= day_ago
+    ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+
+    recent_successful_logins = LoginAuditLog.query.filter(
+        LoginAuditLog.success == True,
+        LoginAuditLog.timestamp >= day_ago
+    ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+    # Get all users (for Total Registered Users)
+    all_users = User.query.order_by(User.id.desc()).limit(100).all()
+
+    # Get deactivated accounts
+    deactivated_users = User.query.filter_by(is_active=False).order_by(User.id.desc()).limit(100).all()
 
     return render_template(
         'admin_overview.html',
@@ -1352,7 +1390,15 @@ def admin_overview():
         successful_logins_24h=successful_logins_24h,
         failed_logins_24h=failed_logins_24h,
         active_today=active_today,
-        deactivated_accounts=deactivated_accounts
+        deactivated_accounts=deactivated_accounts,
+        top_failed_ips = top_failed_ips,
+        recent_users = recent_users,
+        recent_failed_logins = recent_failed_logins,
+        recent_successful_logins = recent_successful_logins,
+        active_users = active_users,
+        all_users=all_users,
+        deactivated_users=deactivated_users,
+
     )
 
 @app.route('/admin/users')
