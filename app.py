@@ -86,10 +86,12 @@ google = oauth.register(
     client_secret=app.config['GOOGLE_CLIENT_SECRET'],
     server_metadata_url=app.config['GOOGLE_DISCOVERY_URL'],
     client_kwargs={
-        'scope': 'openid email profile'
+        'scope': (
+            'openid email profile '
+            'https://www.googleapis.com/auth/user.birthday.read'
+        )
     }
 )
-
 def load_disposable_domains():
     with open('disposable_domains.txt', 'r') as f:
         return set(line.strip().lower() for line in f if line.strip())
@@ -332,10 +334,11 @@ def login():
     error = None
     LOCK_DURATION = timedelta(seconds=60)
     MAX_ATTEMPTS = 3
-    ip, location_str, location_data = get_ip_and_location()
+
+    # grab client info
+    ip, location_str, _ = get_ip_and_location()
     user_agent = request.headers.get('User-Agent')
     success = False
-    user = None
 
     if form.validate_on_submit():
         email = form.email.data.strip().lower()
@@ -343,14 +346,12 @@ def login():
         user = db.session.scalars(stmt).first()
         user_id = user.id if user else None
 
-        # Region block for social login accounts
-        if user and (user.signup_method or '').lower() != 'email':
-            method = (user.signup_method or 'another method').capitalize()
-            flash(f"Login method mismatch. Use {method} instead.", "warning")
+        if user and not user.is_active:
+            flash("Your account has been deactivated. Please contact support.", "danger")
             return redirect(url_for('login'))
 
         if user:
-            # Account lockout check
+            # → account lockout
             if user.is_locked:
                 if user.last_failed_login and datetime.utcnow() - user.last_failed_login >= LOCK_DURATION:
                     user.failed_attempts = 0
@@ -358,27 +359,47 @@ def login():
                     db.session.commit()
                 else:
                     remaining = LOCK_DURATION - (datetime.utcnow() - user.last_failed_login)
-                    return render_template('login.html', form=form, error="Account locked.",
+                    return render_template('login.html', form=form,
+                                           error="Account locked.",
                                            lockout_seconds=int(remaining.total_seconds()))
 
-            if check_password_hash(user.password, form.password.data):
-                current_country = location_data.get('country')
+            # → credential check
+            if not check_password_hash(user.password, form.password.data):
+                user.failed_attempts += 1
+                user.last_failed_login = datetime.utcnow()
+                if user.failed_attempts >= MAX_ATTEMPTS:
+                    user.is_locked = True
+                db.session.commit()
+                error = 'Incorrect email or password.'
+            else:
+                # correct password → reset counter
+                user.failed_attempts = 0
+                db.session.commit()
+
+                # → region‐lock
+                location = get_location_data()
+                current_country = location.get('country')
                 if user.region_lock_enabled:
                     if user.last_country and user.last_country != current_country:
-                        flash(f"Region mismatch. Expected {user.last_country}, got {current_country}.", "danger")
+                        flash(
+                          f"Login blocked: region mismatch. Expected {user.last_country}, got {current_country}.",
+                          "danger"
+                        )
                         return redirect(url_for('login'))
-                    elif not user.last_country:
+                    elif not user.last_country and current_country:
                         user.last_country = current_country
                         db.session.commit()
 
+                # → TOTP 2FA
                 if user.preferred_2fa == 'totp' and user.totp_secret:
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor_totp'))
 
+                # → Email OTP 2FA
                 if user.two_factor_enabled:
                     session['pre_2fa_user_id'] = user.id
                     code = f"{random.randint(0, 999999):06d}"
-                    user.otp_code = generate_password_hash(code)
+                    user.otp_code   = generate_password_hash(code)
                     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
                     db.session.commit()
 
@@ -394,15 +415,13 @@ def login():
 
                     return redirect(url_for('two_factor'))
 
-                # Successful login
+                # → successful login
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
-                user.failed_attempts = 0
-                db.session.commit()
                 success = True
                 send_login_alert_email(user)
 
-                #log location
+                # log audit
                 _, location_str, _ = get_ip_and_location()
                 db.session.add(LoginAuditLog(
                     user_id=user.id,
@@ -414,11 +433,14 @@ def login():
                 ))
                 db.session.commit()
 
-                # Track known devices
+                # known device tracking
                 device_hash = generate_device_hash(ip, user_agent)
-                known_device = KnownDevice.query.filter_by(user_id=user.id, device_hash=device_hash).first()
-                if known_device:
-                    known_device.last_seen = datetime.utcnow()
+                kd = KnownDevice.query.filter_by(
+                    user_id=user.id,
+                    device_hash=device_hash
+                ).first()
+                if kd:
+                    kd.last_seen = datetime.utcnow()
                 else:
                     _, location_str, _ = get_ip_and_location()
                     db.session.add(KnownDevice(
@@ -431,18 +453,10 @@ def login():
                 db.session.commit()
 
                 return redirect(url_for('profile'))
-
-            # Failed login attempt
-            user.failed_attempts += 1
-            user.last_failed_login = datetime.utcnow()
-            if user.failed_attempts >= MAX_ATTEMPTS:
-                user.is_locked = True
-            db.session.commit()
-            error = 'Incorrect email or password.'
         else:
             error = 'Email not found.'
 
-        # Log the attempt
+        # → log failed attempt (or success=False case)
         _, location_str, _ = get_ip_and_location()
         db.session.add(LoginAuditLog(
             user_id=user_id,
@@ -450,11 +464,12 @@ def login():
             success=success,
             ip_address=ip,
             user_agent=user_agent,
-            location = location_str
+            location=location_str
         ))
         db.session.commit()
 
-    return render_template('login.html', form=form, error=error, message=request.args.get('message'))
+    return render_template('login.html', form=form, error=error,
+                           message=request.args.get('message'))
 
 @app.route('/login/google')
 def login_google():
@@ -530,8 +545,6 @@ def auth_callback():
 
     return redirect(url_for('profile'))
 
-
-
 @app.route('/logout')
 @login_required
 def logout():
@@ -573,6 +586,7 @@ def forgot_password():
     error = None
 
     if form.validate_on_submit():
+        # rate‐limit to 3/min by IP
         error, wait = enforce_rate_limit(
             "3 per minute",
             key_prefix=f"forgot:{request.remote_addr}",
@@ -581,7 +595,8 @@ def forgot_password():
         )
         if error:
             session['reset_wait_until'] = (datetime.utcnow() + timedelta(seconds=wait)).isoformat()
-            return render_template('forgot_password.html', form=form, error=error, wait_seconds=wait)
+            return render_template('forgot_password.html', form=form,
+                                   error=error, wait_seconds=wait)
 
         email = form.email.data.strip().lower()
         stmt = select(User).filter_by(email=email)
@@ -589,22 +604,21 @@ def forgot_password():
 
         if user:
             code = f"{random.randint(0, 999999):06d}"
-            user.otp_code = generate_password_hash(code)
+            user.otp_code   = generate_password_hash(code)
             user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
             db.session.commit()
 
-            session['reset_user_id'] = user.id
-            session['reset_otp_attempts'] = 0
-            session['reset_resend_attempts'] = 0
-            session['reset_block_until'] = None
+            session['reset_user_id']        = user.id
+            session['reset_otp_attempts']   = 0
+            session['reset_resend_attempts']= 0
+            session['reset_block_until']    = None
 
             try:
-                msg = Message(
+                mail.send(Message(
                     subject="Reset Password Code",
                     recipients=[user.email],
                     body=f"Hi {user.username},\n\nYour reset code is: {code}\nIt expires in 5 minutes."
-                )
-                mail.send(msg)
+                ))
             except Exception:
                 error = "Failed to send email. Please try again later."
                 return render_template('forgot_password.html', form=form, error=error)
@@ -797,6 +811,7 @@ def verify_reset_otp():
     error = None
     attempts = session.get('reset_otp_attempts', 0)
 
+    # too many bad OTPs → back to start
     if attempts >= 3:
         flash('Too many incorrect OTP attempts. Please try again.', 'danger')
         session.pop('reset_user_id', None)
@@ -811,13 +826,20 @@ def verify_reset_otp():
         elif check_password_hash(user.password, form.new_password.data):
             error = "New password must be different from the current password."
         else:
-            user.password = generate_password_hash(form.new_password.data)
-            user.otp_code = None
+            # all good → update password
+            user.password   = generate_password_hash(form.new_password.data)
+            user.otp_code   = None
             user.otp_expiry = None
             db.session.commit()
+
+            # clear any logged‐in session state
             session.pop('reset_user_id', None)
             session.pop('reset_otp_attempts', None)
-            return redirect(url_for('login', message='pw_changed'))
+            logout_user()
+            session.clear()
+
+            flash("Password changed successfully. Please log in.", "success")
+            return redirect(url_for('login'))
 
     return render_template('reset_password.html', form=form, error=error)
 
