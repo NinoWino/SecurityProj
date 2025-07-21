@@ -2,7 +2,8 @@
 {% block content %}
 <div class="container mt-5">
   <h2>Manage Products</h2>
-  <form method="POST">
+  <form method="POST" enctype="multipart/form-data">
+
     {{ form.hidden_tag() }}
     <div class="mb-3">{{ form.name.label }} {{ form.name(class="form-control") }}</div>
     <div class="mb-3">{{ form.price.label }} {{ form.price(class="form-control") }}</div>

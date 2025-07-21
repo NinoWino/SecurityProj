@@ -1164,7 +1164,7 @@ def manage_products():
     products = Product.query.order_by(Product.created_at.desc()).all()
 
     if form.validate_on_submit():
-        image = form.image.data
+        image = request.files.get('image')
         filename = None
 
         if image:
@@ -1206,17 +1206,58 @@ def delete_product(id):
     db.session.commit()
     flash('Product deleted successfully.', 'success')
     return redirect(url_for('manage_products'))
+@app.route('/save_cart', methods=['POST'])
+@login_required
+def save_cart():
+    from flask import jsonify
+    data = request.get_json()
 
-@app.route('/checkout')
+    # Optional: validate the structure of each cart item
+    valid_cart = []
+    for item in data:
+        if all(k in item for k in ('id', 'name', 'price', 'qty')):
+            valid_cart.append({
+                'id': item['id'],
+                'name': item['name'],
+                'price': float(item['price']),
+                'qty': int(item['qty'])
+            })
+
+    session['cart'] = valid_cart
+    return jsonify({"message": "Cart saved"}), 200
+
+@app.route('/checkout', methods=['GET', 'POST'])
 @login_required
 def checkout():
-    return render_template('checkout.html')
+    if request.method == 'POST':
+        # Example: assume you're getting product IDs and quantities from form
+        product_ids = request.form.getlist('product_id')
+        quantities = request.form.getlist('quantity')
+
+        cart = []
+        for pid, qty in zip(product_ids, quantities):
+            product = Product.query.get(int(pid))
+            if product:
+                cart.append({
+                    'id': product.id,
+                    'name': product.name,
+                    'price': product.price,
+                    'qty': int(qty)
+                })
+
+        session['cart'] = cart
+        return redirect(url_for('invoice_ready'))
+
+    products = Product.query.all()
+    return render_template('checkout.html', products=products)
 
 
-@app.route('/invoice', methods=['POST'])
+
+@app.route('/invoice', methods=['POST', 'GET'])  # make it flexible
 @login_required
 def invoice():
     return redirect(url_for('invoice_ready'))
+
 
 @app.route('/invoice_ready')
 @login_required
@@ -1263,7 +1304,6 @@ def download_invoice():
 
     pdf.ln(5)
     pdf.cell(200, 10, txt=f"Total: ${total:.2f}", ln=True)
-
     # Encrypt
     pdf_bytes = pdf.output(dest='S').encode('latin1')
     reader = PdfReader(BytesIO(pdf_bytes))

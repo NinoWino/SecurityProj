@@ -6,8 +6,8 @@
     {% for product in products %}
     <div class="col-md-4 mb-4">
       <div class="card h-100">
-        {% if product.image_url %}
-        <img src="{{ url_for('static', filename=product.image_url) }}" alt="{{ product.name }}">
+{% if product.image_filename %}
+        <img src="{{ url_for('static', filename='uploads/' + product.image_filename) }}" width="120">
         {% endif %}
         <div class="card-body">
           <h5 class="card-title">{{ product.name }}</h5>
