@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container mt-5 text-center">
+  <h2>✅ Payment Successful!</h2>
+  <p>Your invoice is ready to download.</p>
+
+  <div class="alert alert-info mt-4">
+    <strong>To open the invoice:</strong><br>
+    The PDF is password protected.<br>
+    <strong>Password format:</strong> <code>email_prefix + birthdate</code><br>
+    <strong>Your password:</strong> <code>{{ password_hint }}</code>
+    <br>
+    (e.g., if email is <em>john@example.com</em> and birthdate is <em>2000-01-01</em>, password is <code>john20000101</code>)
+  </div>
+
+  <a href="{{ url_for('download_invoice') }}" class="btn btn-primary mt-3">Download Invoice</a>
+</div>
+{% endblock %}

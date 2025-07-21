@@ -1,5 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>This is the product page</h1>
-
+<div class="container mt-5">
+  <h2 class="mb-4">Our Products</h2>
+  <div class="row">
+    {% for product in products %}
+    <div class="col-md-4 mb-4">
+      <div class="card h-100">
+{% if product.image_filename %}
+        <img src="{{ url_for('static', filename='uploads/' + product.image_filename) }}" width="120">
+        {% endif %}
+        <div class="card-body">
+          <h5 class="card-title">{{ product.name }}</h5>
+          <p class="card-text">${{ product.price }}</p>
+          <a href="{{ url_for('view_product', product_id=product.id) }}" class="btn btn-primary">View</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
 {% endblock %}

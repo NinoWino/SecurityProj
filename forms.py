@@ -30,6 +30,16 @@ class LoginForm(FlaskForm):
     recaptcha = RecaptchaField()
     submit = SubmitField('Login')
 
+
+from flask_wtf.file import FileField, FileAllowed
+from wtforms import StringField, DecimalField, TextAreaField, SubmitField
+class ProductForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired()])
+    price = DecimalField('Price', validators=[DataRequired()])
+    description = TextAreaField('Description')
+    image = FileField('Product Image', validators=[FileAllowed(['jpg', 'jpeg', 'png'], 'Images only!')])
+    submit = SubmitField('Add Product')
+
 class ChangePasswordForm(FlaskForm):
     old_password = PasswordField(
         'Current Password',

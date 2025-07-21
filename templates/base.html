@@ -24,7 +24,7 @@
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav me-auto">
           <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('product') }}">Products</a>
+            <a class="nav-link" href="{{ url_for('products') }}">Products</a>
           </li>
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('contact') }}">Contact</a>
@@ -86,7 +86,8 @@
           <span>Total</span>
           <strong id="cartTotal">$0</strong>
         </div>
-        <button class="btn-primary-minimal w-100">Checkout</button>
+        <a href="{{ url_for('checkout') }}" class="btn btn-primary-minimal w-100 text-center">Checkout</a>
+
       </div>
     </div>
   </div>
@@ -120,6 +121,108 @@
   tooltipTriggerList.forEach(function (tooltipTriggerEl) {
     new bootstrap.Tooltip(tooltipTriggerEl)
   });
+
+
+// Declare cart globally from localStorage or initialize as empty
+const cart = JSON.parse(localStorage.getItem("cart")) || [];
+
+function updateCartUI() {
+  const cartItemsContainer = document.getElementById("cartItems");
+  const cartCount = document.getElementById("cartCount");
+  const cartTotal = document.getElementById("cartTotal");
+
+  if (!cartItemsContainer || !cartCount || !cartTotal) return;
+
+  cartItemsContainer.innerHTML = "";
+  let total = 0;
+
+  if (cart.length === 0) {
+    cartItemsContainer.innerHTML = '<p class="text-muted text-center">Your cart is empty</p>';
+  } else {
+    cart.forEach((item, index) => {
+      const itemDiv = document.createElement("div");
+      itemDiv.classList.add("mb-2", "d-flex", "justify-content-between", "align-items-center");
+
+      itemDiv.innerHTML = `
+        <div>
+          <span>${item.name} x${item.qty}</span>
+        </div>
+        <div>
+          <strong>$${(item.price * item.qty).toFixed(2)}</strong>
+          <button class="btn btn-sm btn-outline-danger ms-2 remove-item" data-index="${index}">&times;</button>
+        </div>
+      `;
+
+      cartItemsContainer.appendChild(itemDiv);
+      total += item.price * item.qty;
+    });
+
+    // Attach remove listeners
+    document.querySelectorAll(".remove-item").forEach(button => {
+      button.addEventListener("click", () => {
+        const index = parseInt(button.getAttribute("data-index"));
+        removeFromCart(index);
+      });
+    });
+  }
+
+  cartCount.textContent = cart.reduce((sum, item) => sum + item.qty, 0);
+  cartTotal.textContent = `$${total.toFixed(2)}`;
+}
+
+function addToCart(product) {
+  const existing = cart.find(item => item.id === product.id);
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    cart.push({ ...product, qty: 1 });
+  }
+  localStorage.setItem("cart", JSON.stringify(cart));
+  updateCartUI();
+}
+
+function removeFromCart(index) {
+  cart.splice(index, 1);
+  localStorage.setItem("cart", JSON.stringify(cart));
+  updateCartUI();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  updateCartUI();
+
+  // Handle Add to Cart buttons
+  document.querySelectorAll(".add-to-cart").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = parseInt(btn.getAttribute("data-id"));
+      const name = btn.getAttribute("data-name");
+      const price = parseFloat(btn.getAttribute("data-price"));
+      addToCart({ id, name, price });
+    });
+  });
+
+  // Handle Checkout Button
+  const checkoutBtn = document.getElementById("checkoutBtn");
+  if (checkoutBtn) {
+    checkoutBtn.addEventListener("click", () => {
+      fetch("/save_cart", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(cart)
+      })
+      .then(res => {
+        if (res.ok) {
+          // Optionally clear the cart
+          localStorage.removeItem("cart");
+          window.location.href = "/invoice";
+        } else {
+          alert("Failed to save cart.");
+        }
+      });
+    });
+  }
+});
 </script>
 
   {% endif %}
