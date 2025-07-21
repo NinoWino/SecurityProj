@@ -354,24 +354,24 @@ def login():
                     session['pre_2fa_user_id'] = user.id
                     return redirect(url_for('two_factor_totp'))
 
-                if user.two_factor_enabled:
-                    session['pre_2fa_user_id'] = user.id
-                    code = f"{random.randint(0, 999999):06d}"
-                    user.otp_code = generate_password_hash(code)
-                    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-                    db.session.commit()
-
-                    try:
-                        mail.send(Message(
-                            subject="Your One-Time Login Code",
-                            recipients=[user.email],
-                            body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
-                        ))
-                    except Exception:
-                        flash("Failed to send OTP. Try again later.", "danger")
-                        return redirect(url_for('login'))
-
-                    return redirect(url_for('two_factor'))
+                # if user.two_factor_enabled:
+                #     session['pre_2fa_user_id'] = user.id
+                #     code = f"{random.randint(0, 999999):06d}"
+                #     user.otp_code = generate_password_hash(code)
+                #     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                #     db.session.commit()
+                #
+                #     try:
+                #         mail.send(Message(
+                #             subject="Your One-Time Login Code",
+                #             recipients=[user.email],
+                #             body=f"Hello {user.username},\n\nYour login code is: {code}\nIt expires in 5 minutes."
+                #         ))
+                #     except Exception:
+                #         flash("Failed to send OTP. Try again later.", "danger")
+                #         return redirect(url_for('login'))
+                #
+                #     return redirect(url_for('two_factor'))
 
                 # Successful login
                 login_user(user)
@@ -381,12 +381,25 @@ def login():
                 success = True
                 send_login_alert_email(user)
 
+                #log location
+                _, location_str, _ = get_ip_and_location()
+                db.session.add(LoginAuditLog(
+                    user_id=user.id,
+                    email=user.email,
+                    success=True,
+                    ip_address=ip,
+                    user_agent=user_agent,
+                    location=location_str
+                ))
+                db.session.commit()
+
                 # Track known devices
                 device_hash = generate_device_hash(ip, user_agent)
                 known_device = KnownDevice.query.filter_by(user_id=user.id, device_hash=device_hash).first()
                 if known_device:
                     known_device.last_seen = datetime.utcnow()
                 else:
+                    _, location_str, _ = get_ip_and_location()
                     db.session.add(KnownDevice(
                         user_id=user.id,
                         device_hash=device_hash,
@@ -409,13 +422,14 @@ def login():
             error = 'Email not found.'
 
         # Log the attempt
+        _, location_str, _ = get_ip_and_location()
         db.session.add(LoginAuditLog(
             user_id=user_id,
             email=email,
             success=success,
             ip_address=ip,
             user_agent=user_agent,
-            location=location_str
+            location = location_str
         ))
         db.session.commit()
 
@@ -1198,13 +1212,6 @@ def edit_user(user_id):
 
     return render_template('admin_user_form.html', action='Edit', user=user)
 
-@app.route('/admin/users')
-@login_required
-@role_required(3)
-def admin_manage_users():
-    users = User.query.all()
-    return render_template('admin_users.html', users=users)
-
 @app.route('/admin/user/<int:user_id>/toggle')
 @login_required
 @role_required(3)
@@ -1291,6 +1298,7 @@ def change_email():
 @app.route('/delete_account', methods=['GET', 'POST'])
 @login_required
 def delete_account():
+    from forms import DeleteAccountForm
     form = DeleteAccountForm()
 
     if form.validate_on_submit():
@@ -1360,6 +1368,5 @@ def force_password_reset():
 def forbidden(error):
     return render_template('403.html'), 403
 
-print(generate_password_hash('test123'))
 if __name__ == '__main__':
     app.run(debug=True)
