@@ -8,7 +8,7 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User, SystemAuditLog, KnownDevice, role_required, LoginAuditLog
 from hashlib import sha256
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm, BirthdateForm, ChangeEmailForm
+from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm, BirthdateForm, ChangeEmailForm, LoginRestrictionForm
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -310,6 +310,19 @@ def enforce_rate_limit(limit_string, key_prefix, error_message="Too many request
     except RateLimitExceeded:
         return error_message, wait_seconds
 
+def is_user_blocked_by_time(user):
+    now = datetime.now().time()
+    start = user.login_block_start
+    end = user.login_block_end
+
+    if not start or not end:
+        return False  # no restriction set
+
+    if start < end:
+        return start <= now <= end
+    else:
+        # Handles overnight span (e.g., 11 PM to 6 AM)
+        return now >= start or now <= end
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -387,6 +400,11 @@ def login():
                     elif not user.last_country and current_country:
                         user.last_country = current_country
                         db.session.commit()
+
+                # User defined time based access control
+                if is_user_blocked_by_time(user):
+                    flash("Login blocked during your restricted hours.", "danger")
+                    return redirect(url_for('login'))
 
                 # → TOTP 2FA
                 if user.preferred_2fa == 'totp' and user.totp_secret:
@@ -538,6 +556,11 @@ def auth_callback():
             user.last_country = country
             db.session.commit()
 
+    # User defined time based access control
+    if is_user_blocked_by_time(user):
+        flash("Login blocked during your restricted hours.", "danger")
+        return redirect(url_for('login'))
+
     # ── TOTP 2FA ───────────────────────────────────────────────
     if user.preferred_2fa == 'totp' and user.totp_secret:
         session['pre_2fa_user_id'] = user.id
@@ -565,7 +588,7 @@ def auth_callback():
     send_login_alert_email(user)
 
     # Prompt for birthdate if missing
-    if not user.birthdate:
+    if not user.birthdate or not user.security_answer_hash or not user.security_question:
         return redirect(url_for('collect_birthdate'))
 
     return redirect(url_for('profile'))
@@ -577,11 +600,19 @@ def auth_callback():
 @login_required
 def collect_birthdate():
     form = BirthdateForm()
+
+    # Skip if already complete
+    if current_user.birthdate and current_user.security_answer_hash and current_user.security_question:
+        return redirect(url_for('profile'))
+
     if form.validate_on_submit():
         current_user.birthdate = form.birthdate.data
+        current_user.security_question = form.security_question.data
+        current_user.security_answer_hash = generate_password_hash(form.security_answer.data.strip())
         db.session.commit()
-        flash('Thanks, your birthdate has been saved.', 'success')
+        flash('Thanks, your profile has been saved.', 'success')
         return redirect(url_for('profile'))
+
     return render_template('collect_birthdate.html', form=form)
 
 @app.route('/logout')
@@ -1039,11 +1070,34 @@ def fallback_to_email_otp():
 
     return redirect(url_for('two_factor', resent=1))
 
-@app.route('/security')
+@app.route('/security', methods=['GET', 'POST'])
 @login_required
 def security():
     toggle_form = Toggle2FAForm()
-    return render_template('security.html', toggle_form=toggle_form)
+    restriction_form = LoginRestrictionForm()
+
+    if request.method == 'POST':
+        if 'remove_restriction' in request.form:
+            current_user.login_block_start = None
+            current_user.login_block_end = None
+            db.session.commit()
+            flash("Login restriction removed.", "info")
+            return redirect(url_for('security'))
+
+        if restriction_form.validate_on_submit():
+            current_user.login_block_start = restriction_form.block_start.data
+            current_user.login_block_end = restriction_form.block_end.data
+            db.session.commit()
+            flash("Login restriction updated.", "success")
+            return redirect(url_for('security'))
+
+    restriction_form.block_start.data = current_user.login_block_start
+    restriction_form.block_end.data = current_user.login_block_end
+
+    return render_template('security.html',
+                           toggle_form=toggle_form,
+                           restriction_form=restriction_form)
+
 
 @app.route('/toggle_region_lock', methods=['POST'])
 @login_required

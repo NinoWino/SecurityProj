@@ -1,6 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
-from sqlalchemy import PickleType, DateTime
+from sqlalchemy import PickleType, DateTime, Time
 from datetime import datetime
 from functools import wraps
 from flask import abort
@@ -39,6 +39,8 @@ class User(UserMixin, db.Model):
     region_lock_enabled = db.Column(db.Boolean, default=False)
     last_country = db.Column(db.String(64))
     signup_method = db.Column(db.String(20), nullable=False, default='email')
+    login_block_start = db.Column(Time, nullable=True)  # e.g., 23:00
+    login_block_end = db.Column(Time, nullable=True)  # e.g., 06:00
 
 
     password_history = db.Column(PickleType, default=list)

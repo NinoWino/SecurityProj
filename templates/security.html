@@ -87,7 +87,34 @@
         </button>
       </form>
     </div>
+      <h5 class="mb-3 border-bottom pb-2">
+    Login Time Restrictions
+    <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip"
+       title="Block logins during specific hours you define. Helpful for preventing late-night access or suspicious activity."></i>
+    </h5>
 
+    <form method="POST">
+    {{ restriction_form.hidden_tag() }}
+    <div class="row mb-3">
+      <div class="col">
+        {{ restriction_form.block_start.label(class="form-label") }}
+        {{ restriction_form.block_start(class="form-control", type="time") }}
+      </div>
+      <div class="col">
+        {{ restriction_form.block_end.label(class="form-label") }}
+        {{ restriction_form.block_end(class="form-control", type="time") }}
+      </div>
+    </div>
+    <button type="submit" class="btn btn-outline-primary w-100">
+      Update Restriction
+    </button>
+    </form>
+    <!-- 🔻 Remove Restriction Button -->
+    <form method="POST" class="mt-2">
+    <button type="submit" name="remove_restriction" value="1"
+            class="btn btn-outline-danger w-100">
+            Remove Restriction
+    </button>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="mt-3">

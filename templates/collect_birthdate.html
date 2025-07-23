@@ -6,9 +6,10 @@
         <h3 class="mb-0">Almost done!</h3>
       </div>
       <div class="card-body">
-        <p>Please enter your birthdate so we can complete your profile.</p>
+        <p>Please complete your profile to continue.</p>
         <form method="POST">
           {{ form.hidden_tag() }}
+
           <div class="mb-3">
             {{ form.birthdate.label(class="form-label") }}
             {{ form.birthdate(class="form-control") }}
@@ -16,6 +17,23 @@
               <div class="text-danger">{{ err }}</div>
             {% endfor %}
           </div>
+
+          <div class="mb-3">
+            {{ form.security_question.label(class="form-label") }}
+            {{ form.security_question(class="form-select") }}
+            {% for err in form.security_question.errors %}
+              <div class="text-danger">{{ err }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="mb-3">
+            {{ form.security_answer.label(class="form-label") }}
+            {{ form.security_answer(class="form-control") }}
+            {% for err in form.security_answer.errors %}
+              <div class="text-danger">{{ err }}</div>
+            {% endfor %}
+          </div>
+
           <button type="submit" class="btn btn-primary w-100">Save</button>
         </form>
       </div>

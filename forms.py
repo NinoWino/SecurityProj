@@ -3,6 +3,7 @@ from wtforms import StringField, PasswordField, SubmitField, DateField , SelectF
 from wtforms.validators import DataRequired, Email, EqualTo, Length ,ValidationError, Regexp , Optional
 from flask_wtf.recaptcha import RecaptchaField
 from wtforms import ValidationError
+from wtforms.fields import TimeField
 from flask_login import current_user
 from zxcvbn import zxcvbn
 import hashlib
@@ -102,6 +103,15 @@ class BirthdateForm(FlaskForm):
         format='%Y-%m-%d',
         validators=[DataRequired()]
     )
+    security_question = SelectField('Security Question', choices=[
+        ('pet', "What is the name of your first pet?"),
+        ('movie', "What is your favorite childhood movie?"),
+        ('friend', "What is your childhood best friend's first name?"),
+        ('hero', "Who was your childhood hero?")
+    ], validators=[DataRequired()])
+
+    security_answer = StringField('Answer', validators=[DataRequired()])
+
     submit = SubmitField('Save')
 
     def validate_birthdate(self, field):
@@ -233,3 +243,8 @@ class ForcePasswordResetForm(FlaskForm):
 class VerifyTOTPForm(FlaskForm):
     token = StringField('Authentication Code', validators=[DataRequired(), Length(min=6, max=6)])
     submit = SubmitField('Verify')
+
+class LoginRestrictionForm(FlaskForm):
+    block_start = TimeField('Start Time (block begins)', format='%H:%M', validators=[Optional()])
+    block_end = TimeField('End Time (block ends)', format='%H:%M', validators=[Optional()])
+    submit = SubmitField('Update Restriction')
