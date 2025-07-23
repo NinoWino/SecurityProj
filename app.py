@@ -391,11 +391,13 @@ def login():
                 # → TOTP 2FA
                 if user.preferred_2fa == 'totp' and user.totp_secret:
                     session['pre_2fa_user_id'] = user.id
+                    session['totp_otp_attempts'] = 0  # ← RESET
                     return redirect(url_for('two_factor_totp'))
 
                 # → Email OTP 2FA
                 if user.two_factor_enabled:
                     session['pre_2fa_user_id'] = user.id
+                    session['login_otp_attempts'] = 0
                     code = f"{random.randint(0, 999999):06d}"
                     user.otp_code   = generate_password_hash(code)
                     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
@@ -539,11 +541,13 @@ def auth_callback():
     # ── TOTP 2FA ───────────────────────────────────────────────
     if user.preferred_2fa == 'totp' and user.totp_secret:
         session['pre_2fa_user_id'] = user.id
+        session['totp_otp_attempts'] = 0  # ← Add this
         return redirect(url_for('two_factor_totp'))
 
     # ── Email-OTP 2FA ─────────────────────────────────────────
     if user.two_factor_enabled:
         session['pre_2fa_user_id'] = user.id
+        session['login_otp_attempts'] = 0
         code = f"{random.randint(0, 999999):06d}"
         user.otp_code   = generate_password_hash(code)
         user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
