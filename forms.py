@@ -9,6 +9,7 @@ from zxcvbn import zxcvbn
 import hashlib
 import requests
 from datetime import date
+import ipaddress
 
 def validate_pwned_password(field):
     sha1 = hashlib.sha1(field.data.encode('utf-8')).hexdigest().upper()
@@ -248,3 +249,20 @@ class LoginRestrictionForm(FlaskForm):
     block_start = TimeField('Start Time (block begins)', format='%H:%M', validators=[Optional()])
     block_end = TimeField('End Time (block ends)', format='%H:%M', validators=[Optional()])
     submit = SubmitField('Update Restriction')
+
+class IPWhitelistForm(FlaskForm):
+    whitelist = TextAreaField(
+        'Allowed IPs (comma-separated)',
+        description="Only these IPs can be used to log in.",
+        validators=[Optional()]
+    )
+    submit = SubmitField('Update IP Whitelist')
+
+    def validate_whitelist(self, field):
+        raw_input = field.data or ""
+        ip_list = [ip.strip() for ip in raw_input.split(",") if ip.strip()]
+        for ip in ip_list:
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                raise ValidationError(f"'{ip}' is not a valid IP address.")

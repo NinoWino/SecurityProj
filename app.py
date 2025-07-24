@@ -8,7 +8,12 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User, SystemAuditLog, KnownDevice, role_required, LoginAuditLog
 from hashlib import sha256
-from forms import LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm, ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm, RegisterDetailsForm, VerifyTOTPForm, EmailForm, BirthdateForm, ChangeEmailForm, LoginRestrictionForm
+from forms import (
+    LoginForm, OTPForm, ChangePasswordForm, Toggle2FAForm,
+    ForgotPasswordForm, ResetPasswordForm, DeleteAccountForm,
+    RegisterDetailsForm, VerifyTOTPForm, EmailForm, BirthdateForm,
+    ChangeEmailForm, LoginRestrictionForm, IPWhitelistForm
+)
 from datetime import datetime, timedelta
 import random
 from flask_mail import Mail, Message
@@ -425,6 +430,13 @@ def login():
                     flash("Login blocked during your restricted hours.", "danger")
                     return redirect(url_for('login'))
 
+                user_ip = get_public_ip()
+                if user.ip_whitelist:
+                    allowed_ips = [ip.strip() for ip in user.ip_whitelist.split(",")]
+                    if user_ip not in allowed_ips:
+                        flash("Your IP is not authorized to access this account.", "danger")
+                        return redirect(url_for('login'))
+
                 # → TOTP 2FA
                 if user.preferred_2fa == 'totp' and user.totp_secret:
                     session['pre_2fa_user_id'] = user.id
@@ -573,6 +585,13 @@ def auth_callback():
     if is_user_blocked_by_time(user):
         flash("Login blocked during your restricted hours.", "danger")
         return redirect(url_for('login'))
+
+    user_ip = get_public_ip()
+    if user.ip_whitelist:
+        allowed_ips = [ip.strip() for ip in user.ip_whitelist.split(",")]
+        if user_ip not in allowed_ips:
+            flash("Your IP is not authorized to access this account.", "danger")
+            return redirect(url_for('login'))
 
     # ── TOTP 2FA ───────────────────────────────────────────────
     if user.preferred_2fa == 'totp' and user.totp_secret:
@@ -1095,15 +1114,27 @@ def fallback_to_email_otp():
 def security():
     toggle_form = Toggle2FAForm()
     restriction_form = LoginRestrictionForm()
+    ip_form = IPWhitelistForm()
 
-    if request.method == 'POST':
-        if 'remove_restriction' in request.form:
-            current_user.login_block_start = None
-            current_user.login_block_end = None
+    if 'remove_ip_whitelist' in request.form:
+        current_user.ip_whitelist = None
+        db.session.commit()
+        flash("IP whitelist removed.", "info")
+        return redirect(url_for('security'))
+
+    elif 'ip_submit' in request.form:
+        if ip_form.validate_on_submit():
+            raw_input = ip_form.whitelist.data.strip()
+            clean_ips = ",".join(sorted(set(ip.strip() for ip in raw_input.split(",") if ip.strip())))
+            current_user.ip_whitelist = clean_ips or None
             db.session.commit()
-            flash("Login restriction removed.", "info")
+            flash("IP whitelist updated.", "success")
+            flash(f"Currently allowed IPs: {clean_ips}", "info")
             return redirect(url_for('security'))
+        else:
+            flash("Invalid IP input. Please check your entries.", "danger")
 
+    elif 'restriction_submit' in request.form:
         if restriction_form.validate_on_submit():
             current_user.login_block_start = restriction_form.block_start.data
             current_user.login_block_end = restriction_form.block_end.data
@@ -1114,9 +1145,12 @@ def security():
     restriction_form.block_start.data = current_user.login_block_start
     restriction_form.block_end.data = current_user.login_block_end
 
+    user_ip = get_public_ip()
     return render_template('security.html',
                            toggle_form=toggle_form,
-                           restriction_form=restriction_form)
+                           restriction_form=restriction_form,
+                           ip_form=ip_form, user_ip=user_ip)
+
 
 
 @app.route('/toggle_region_lock', methods=['POST'])

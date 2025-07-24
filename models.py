@@ -41,7 +41,7 @@ class User(UserMixin, db.Model):
     signup_method = db.Column(db.String(20), nullable=False, default='email')
     login_block_start = db.Column(Time, nullable=True)  # e.g., 23:00
     login_block_end = db.Column(Time, nullable=True)  # e.g., 06:00
-
+    ip_whitelist = db.Column(db.Text, nullable=True)  # Comma-separated IPs
 
     password_history = db.Column(PickleType, default=list)
     password_last_changed = db.Column(DateTime, default=datetime.utcnow)

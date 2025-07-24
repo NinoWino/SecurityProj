@@ -1,11 +1,12 @@
 {% extends "profile_security_sidebar.html" %}
 {% block profile_content %}
 
-<div class="card shadow-sm">
+
+<div class="card shadow-sm mb-5">
   <div class="card-header bg-dark text-white">
     <h2 class="mb-0">Security Settings</h2>
   </div>
-  <div class="card-body">
+  <div class="card-body py-4">
 
     <h5 class="mb-3 border-bottom pb-2">Account</h5>
     <div class="d-flex flex-column gap-2 mb-4">
@@ -27,12 +28,8 @@
           <span class="badge bg-danger">Disabled</span>
         {% endif %}
       </div>
-
       {% if current_user.preferred_2fa == 'totp' %}
-        <!-- Show modal warning: switching to 2FA disables auth app -->
-        <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#confirm2FAModal">
-          Enable 2FA
-        </button>
+        <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#confirm2FAModal">Enable 2FA</button>
       {% else %}
         <form method="POST" action="{{ url_for('toggle_2fa') }}" class="d-inline">
           {{ toggle_form.hidden_tag() }}
@@ -49,7 +46,7 @@
       Authenticator App
       <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Secure your account with a time-based 6-digit code using apps like Google Authenticator or Microsoft Authenticator."></i>
     </h5>
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex justify-content-between align-items-center mb-4">
       <div>
         {% if current_user.preferred_2fa == 'totp' and current_user.totp_secret %}
           <span class="badge bg-success">Enabled</span>
@@ -57,13 +54,10 @@
           <span class="badge bg-danger">Disabled</span>
         {% endif %}
       </div>
-
       {% if current_user.preferred_2fa == 'totp' %}
         <a href="{{ url_for('disable_totp') }}" class="btn btn-outline-danger">Disable Auth App</a>
       {% elif current_user.two_factor_enabled %}
-        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#confirmAuthModal">
-          Enable Auth App
-        </button>
+        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#confirmAuthModal">Enable Auth App</button>
       {% else %}
         <a href="{{ url_for('start_totp_setup') }}" class="btn btn-outline-primary">Enable Auth App</a>
       {% endif %}
@@ -87,34 +81,74 @@
         </button>
       </form>
     </div>
-      <h5 class="mb-3 border-bottom pb-2">
-    Login Time Restrictions
-    <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip"
-       title="Block logins during specific hours you define. Helpful for preventing late-night access or suspicious activity."></i>
-    </h5>
 
-    <form method="POST">
-    {{ restriction_form.hidden_tag() }}
-    <div class="row mb-3">
-      <div class="col">
-        {{ restriction_form.block_start.label(class="form-label") }}
-        {{ restriction_form.block_start(class="form-control", type="time") }}
+    <!-- IP Whitelist -->
+<h5 class="mb-3 border-bottom pb-2">
+  IP Whitelist
+  <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip"
+     title="Only these IPs can log in to your account. Leave empty to disable."></i>
+</h5>
+
+<form method="POST">
+  {{ ip_form.hidden_tag() }}
+  <div class="mb-3">
+    {{ ip_form.whitelist.label(class="form-label") }}
+    {{ ip_form.whitelist(class="form-control", rows="2") }}
+    <small class="form-text text-muted">
+      Example: 192.168.1.5, 203.0.113.12<br>
+      Your current IP: <code>{{ user_ip }}</code>
+    </small>
+    {% if current_user.ip_whitelist %}
+      <div class="mt-2 small text-muted">
+        Currently allowed IPs: <code>{{ current_user.ip_whitelist }}</code>
       </div>
-      <div class="col">
-        {{ restriction_form.block_end.label(class="form-label") }}
-        {{ restriction_form.block_end(class="form-control", type="time") }}
-      </div>
-    </div>
-    <button type="submit" class="btn btn-outline-primary w-100">
-      Update Restriction
+    {% endif %}
+  </div>
+  <div class="mb-4">
+    <button type="submit" name="ip_submit" value="1" class="btn btn-outline-primary w-100">
+      {{ ip_form.submit.label.text }}
     </button>
+</form>
+
+<form method="POST" class="mt-2">
+    <button type="submit" name="remove_ip_whitelist" value="1"
+            class="btn btn-outline-danger w-100">
+      Remove IP Whitelist
+    </button>
+  </div>
+</form>
+
+
+    <!-- Login Time Restrictions -->
+    <h5 class="mb-3 border-bottom pb-2">
+      Login Time Restrictions
+      <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip"
+         title="Block logins during specific hours you define. Helpful for preventing late-night access or suspicious activity."></i>
+    </h5>
+    <form method="POST">
+      {{ restriction_form.hidden_tag() }}
+      <div class="row mb-3">
+        <div class="col">
+          {{ restriction_form.block_start.label(class="form-label") }}
+          {{ restriction_form.block_start(class="form-control", type="time") }}
+        </div>
+        <div class="col">
+          {{ restriction_form.block_end.label(class="form-label") }}
+          {{ restriction_form.block_end(class="form-control", type="time") }}
+        </div>
+      </div>
+      <button type="submit" name="restriction_submit" value="1" class="btn btn-outline-primary w-100">
+        Update Restriction
+      </button>
     </form>
+
     <!-- 🔻 Remove Restriction Button -->
     <form method="POST" class="mt-2">
-    <button type="submit" name="remove_restriction" value="1"
-            class="btn btn-outline-danger w-100">
-            Remove Restriction
-    </button>
+      <button type="submit" name="remove_restriction" value="1" class="btn btn-outline-danger w-100">
+        Remove Restriction
+      </button>
+    </form>
+
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="mt-3">
@@ -127,11 +161,10 @@
         </div>
       {% endif %}
     {% endwith %}
-
   </div>
 </div>
 
-<!-- Modal: Enable Auth App -->
+<!-- Modals -->
 <div class="modal fade" id="confirmAuthModal" tabindex="-1" aria-labelledby="confirmAuthModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -151,7 +184,6 @@
   </div>
 </div>
 
-<!-- Modal: Enable 2FA (while TOTP active) -->
 <div class="modal fade" id="confirm2FAModal" tabindex="-1" aria-labelledby="confirm2FAModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
