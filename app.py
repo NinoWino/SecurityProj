@@ -96,46 +96,6 @@ def load_disposable_domains():
 
 DISPOSABLE_DOMAINS = load_disposable_domains()
 
-# Device hash generator for device recognition
-def generate_device_hash(ip, user_agent):
-    return sha256(f"{ip}_{user_agent}".encode()).hexdigest()
-
-# Get public IP and location using ipify + ipapi
-def get_ip_and_location():
-    try:
-        ip_response = requests.get('https://api.ipify.org?format=json', timeout=3)
-        ip = ip_response.json().get('ip')
-
-        loc_response = requests.get(f'https://ipwhois.app/json/{ip}', timeout=3)
-        loc_data = loc_response.json()
-
-        city = loc_data.get('city', '')
-        region = loc_data.get('region', '')
-        country = loc_data.get('country_name', '')
-
-        location_str = ', '.join(filter(None, [city, region, country]))  # just for display
-        return ip, location_str, {'city': city, 'region': region, 'country': country}
-    except Exception as e:
-        print("GeoIP fetch failed:", e)
-        return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
-
-
-# System Audit Log
-def log_system_action(user_id, action_type, description=None):
-    ip, location = get_ip_and_location()
-    user_agent = request.headers.get('User-Agent')
-
-    log = SystemAuditLog(
-        user_id=user_id,
-        action_type=action_type,
-        description=description,
-        ip_address=ip,
-        user_agent=user_agent,
-        location=location
-    )
-    db.session.add(log)
-    db.session.commit()
-
 @app.after_request
 def add_no_cache_headers(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
@@ -162,6 +122,7 @@ limiter = Limiter(
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#ALL OF HIDAYAT FUNCTIONS ARE HERE
 
 # @app.errorhandler(Exception)
 # def handle_unexpected_error(e):
@@ -220,8 +181,6 @@ def get_location_data(_unused=None):
             'tor': False,
             'hosting': False
         }
-
-
 
 def get_device_info(user_agent_string):
     ua = parse_ua(user_agent_string)
@@ -323,10 +282,70 @@ def is_user_blocked_by_time(user):
     else:
         # Handles overnight span (e.g., 11 PM to 6 AM)
         return now >= start or now <= end
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#ALL OF ENZAC FUNCTIONS ARE HERE
+
+# Device hash generator for device recognition
+def generate_device_hash(ip, user_agent):
+    return sha256(f"{ip}_{user_agent}".encode()).hexdigest()
+
+# Get public IP and location using ipify + ipapi
+def get_ip_and_location():
+    try:
+        ip_response = requests.get('https://api.ipify.org?format=json', timeout=3)
+        ip = ip_response.json().get('ip')
+
+        loc_response = requests.get(f'https://ipwhois.app/json/{ip}', timeout=3)
+        loc_data = loc_response.json()
+
+        city = loc_data.get('city', '')
+        region = loc_data.get('region', '')
+        country = loc_data.get('country_name', '')
+
+        location_str = ', '.join(filter(None, [city, region, country]))  # just for display
+        return ip, location_str, {'city': city, 'region': region, 'country': country}
+    except Exception as e:
+        print("GeoIP fetch failed:", e)
+        return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
+
+
+# System Audit Log
+def log_system_action(user_id, action_type, description=None):
+    ip, location = get_ip_and_location()
+    user_agent = request.headers.get('User-Agent')
+
+    log = SystemAuditLog(
+        user_id=user_id,
+        action_type=action_type,
+        description=description,
+        ip_address=ip,
+        user_agent=user_agent,
+        location=location
+    )
+    db.session.add(log)
+    db.session.commit()
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#ALL OF JUNYN FUNCTIONS PUT HERE
+
+
+
+
+
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#ALL OF RENFRED FUNCTIONS PUT HERE
+
+
+
+
+
+
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -494,12 +513,6 @@ def login_google():
     redirect_uri = url_for('auth_callback', _external=True)
     return google.authorize_redirect(redirect_uri)
 
-@app.route('/user')
-@login_required
-@role_required(1, 2, 3)
-def user_dashboard():
-    return render_template('user_dashboard.html')
-
 @app.route('/auth/callback')
 def auth_callback():
     try:
@@ -646,7 +659,6 @@ def change_password():
             return redirect(url_for('login', message='pw_changed'))
 
     return render_template('change_password.html', form=form, error=error)
-
 @app.route('/forgot_password', methods=['GET', 'POST'])
 def forgot_password():
     if current_user.is_authenticated:
@@ -673,15 +685,21 @@ def forgot_password():
         user = db.session.scalars(stmt).first()
 
         if user:
+            # ❌ Block Google users from using forgot password
+            if (user.signup_method or 'email').lower() == 'google':
+                error = "This email was registered using Google. Please use Google Login instead."
+                return render_template('forgot_password.html', form=form, error=error)
+
+            # ✅ Proceed with OTP generation
             code = f"{random.randint(0, 999999):06d}"
             user.otp_code   = generate_password_hash(code)
             user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
             db.session.commit()
 
-            session['reset_user_id']        = user.id
-            session['reset_otp_attempts']   = 0
-            session['reset_resend_attempts']= 0
-            session['reset_block_until']    = None
+            session['reset_user_id']         = user.id
+            session['reset_otp_attempts']    = 0
+            session['reset_resend_attempts'] = 0
+            session['reset_block_until']     = None
 
             try:
                 mail.send(Message(
@@ -695,9 +713,11 @@ def forgot_password():
 
             return redirect(url_for('verify_reset_otp'))
 
+        # ❌ No matching user
         error = "Email not found."
 
     return render_template('forgot_password.html', form=form, error=error)
+
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1262,6 +1282,126 @@ def register_details():
 def profile():
     return render_template('profile.html')
 
+@app.route('/change_username', methods=['GET', 'POST'])
+@login_required
+
+def change_username():
+    from forms import ChangeUsernameForm
+    form = ChangeUsernameForm()
+    error = None
+
+    if form.validate_on_submit():
+        try:
+            current_user.username = form.new_username.data.strip()
+            db.session.commit()
+            flash('Username changed successfully.', 'success')
+            return redirect(url_for('profile'))
+        except Exception:
+            db.session.rollback()
+            error = 'Failed to update username. Please try again.'
+            flash(error, 'danger')
+
+    return render_template('change_username.html', form=form, error=error)
+
+@app.route('/change_email', methods=['GET', 'POST'])
+@login_required
+def change_email():
+    if (current_user.signup_method or 'email').lower() != 'email':
+        flash(
+            "You cannot change your email address because you signed up via "
+            f"{current_user.signup_method.capitalize()}.",
+            "warning"
+        )
+        return redirect(url_for('profile'))
+
+    form = ChangeEmailForm()
+    error = None
+
+    if form.validate_on_submit():
+        try:
+            # normalize to lowercase to avoid dupes
+            current_user.email = form.new_email.data.strip().lower()
+            db.session.commit()
+            flash('Email changed successfully.', 'success')
+            return redirect(url_for('profile'))
+        except Exception:
+            db.session.rollback()
+            error = 'Failed to update email. Please try again.'
+            flash(error, 'danger')
+
+    return render_template('change_email.html', form=form, error=error)
+
+@app.route('/delete_account', methods=['GET', 'POST'])
+@login_required
+def delete_account():
+    from forms import DeleteAccountForm
+    form = DeleteAccountForm()
+
+    if form.validate_on_submit():
+        user = db.session.get(User, current_user.id)
+
+        # Check password
+        if not check_password_hash(user.password, form.password.data):
+            flash("Incorrect password.", "danger")
+            return redirect(url_for('delete_account'))
+
+        # Check security answer
+        if not check_password_hash(user.security_answer_hash, form.security_answer.data.strip()):
+            flash("Incorrect security answer.", "danger")
+            return redirect(url_for('delete_account'))
+
+        try:
+            logout_user()
+            db.session.delete(user)
+            db.session.commit()
+            session.clear()
+            flash('Account deleted successfully.', 'success')
+            return redirect(url_for('login'))
+
+        except Exception:
+            db.session.rollback()
+            flash('Failed to delete account. Please try again.', 'danger')
+
+    return render_template('delete_account.html', form=form)
+
+@app.route('/force_password_reset', methods=['GET', 'POST'])
+def force_password_reset():
+    from forms import ForcePasswordResetForm
+    form = ForcePasswordResetForm()
+    user_id = session.get('expired_user_id')
+
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    error = None
+
+    if form.validate_on_submit():
+        from werkzeug.security import generate_password_hash, check_password_hash
+
+        if not check_password_hash(user.password, form.old_password.data):
+            error = 'Current password is incorrect.'
+        elif check_password_hash(user.password, form.new_password.data):
+            error = 'New password must be different from the old password.'
+        elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
+            error = 'You cannot reuse one of your last 3 passwords.'
+        else:
+            new_hash = generate_password_hash(form.new_password.data)
+            user.password = new_hash
+            user.password_last_changed = datetime.utcnow()
+            user.password_history.append(new_hash)
+            if len(user.password_history) > 3:
+                user.password_history = user.password_history[-3:]
+
+            db.session.commit()
+            session.pop('expired_user_id', None)
+            flash('Password updated successfully. Please log in.', 'success')
+            return redirect(url_for('login'))
+
+    return render_template('force_password_reset.html', form=form, error=error)
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 @app.route('/products')
 @login_required
@@ -1432,9 +1572,14 @@ def download_invoice():
     response.headers['Content-Disposition'] = 'attachment; filename=invoice.pdf'
     return response
 
-@app.route('/stafflogin')
-def stafflogin():
-    return render_template('stafflogin.html')
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+@app.route('/user')
+@login_required
+@role_required(1, 2, 3)
+def user_dashboard():
+    return render_template('user_dashboard.html')
 
 @app.route('/staff')
 @login_required
@@ -1576,127 +1721,10 @@ def security_dashboard():
 def contact():
     return render_template('contact.html')
 
-@app.route('/change_username', methods=['GET', 'POST'])
-@login_required
-
-def change_username():
-    from forms import ChangeUsernameForm
-    form = ChangeUsernameForm()
-    error = None
-
-    if form.validate_on_submit():
-        try:
-            current_user.username = form.new_username.data.strip()
-            db.session.commit()
-            flash('Username changed successfully.', 'success')
-            return redirect(url_for('profile'))
-        except Exception:
-            db.session.rollback()
-            error = 'Failed to update username. Please try again.'
-            flash(error, 'danger')
-
-    return render_template('change_username.html', form=form, error=error)
-
-@app.route('/change_email', methods=['GET', 'POST'])
-@login_required
-def change_email():
-    if (current_user.signup_method or 'email').lower() != 'email':
-        flash(
-            "You cannot change your email address because you signed up via "
-            f"{current_user.signup_method.capitalize()}.",
-            "warning"
-        )
-        return redirect(url_for('profile'))
-
-    form = ChangeEmailForm()
-    error = None
-
-    if form.validate_on_submit():
-        try:
-            # normalize to lowercase to avoid dupes
-            current_user.email = form.new_email.data.strip().lower()
-            db.session.commit()
-            flash('Email changed successfully.', 'success')
-            return redirect(url_for('profile'))
-        except Exception:
-            db.session.rollback()
-            error = 'Failed to update email. Please try again.'
-            flash(error, 'danger')
-
-    return render_template('change_email.html', form=form, error=error)
-
-@app.route('/delete_account', methods=['GET', 'POST'])
-@login_required
-def delete_account():
-    from forms import DeleteAccountForm
-    form = DeleteAccountForm()
-
-    if form.validate_on_submit():
-        user = db.session.get(User, current_user.id)
-
-        # Check password
-        if not check_password_hash(user.password, form.password.data):
-            flash("Incorrect password.", "danger")
-            return redirect(url_for('delete_account'))
-
-        # Check security answer
-        if not check_password_hash(user.security_answer_hash, form.security_answer.data.strip()):
-            flash("Incorrect security answer.", "danger")
-            return redirect(url_for('delete_account'))
-
-        try:
-            logout_user()
-            db.session.delete(user)
-            db.session.commit()
-            session.clear()
-            flash('Account deleted successfully.', 'success')
-            return redirect(url_for('login'))
-
-        except Exception:
-            db.session.rollback()
-            flash('Failed to delete account. Please try again.', 'danger')
-
-    return render_template('delete_account.html', form=form)
-
-@app.route('/force_password_reset', methods=['GET', 'POST'])
-def force_password_reset():
-    from forms import ForcePasswordResetForm
-    form = ForcePasswordResetForm()
-    user_id = session.get('expired_user_id')
-
-    if not user_id:
-        return redirect(url_for('login'))
-
-    user = db.session.get(User, user_id)
-    error = None
-
-    if form.validate_on_submit():
-        from werkzeug.security import generate_password_hash, check_password_hash
-
-        if not check_password_hash(user.password, form.old_password.data):
-            error = 'Current password is incorrect.'
-        elif check_password_hash(user.password, form.new_password.data):
-            error = 'New password must be different from the old password.'
-        elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
-            error = 'You cannot reuse one of your last 3 passwords.'
-        else:
-            new_hash = generate_password_hash(form.new_password.data)
-            user.password = new_hash
-            user.password_last_changed = datetime.utcnow()
-            user.password_history.append(new_hash)
-            if len(user.password_history) > 3:
-                user.password_history = user.password_history[-3:]
-
-            db.session.commit()
-            session.pop('expired_user_id', None)
-            flash('Password updated successfully. Please log in.', 'success')
-            return redirect(url_for('login'))
-
-    return render_template('force_password_reset.html', form=form, error=error)
-
 @app.errorhandler(403)
 def forbidden(error):
     return render_template('403.html'), 403
+
 
 if __name__ == '__main__':
     app.run(debug=True)
