@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify
+from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 from flask_login import (
@@ -36,6 +37,7 @@ from fpdf import FPDF
 from PyPDF2 import PdfReader, PdfWriter
 from flask import make_response
 from io import BytesIO
+import secrets
 
 
 
@@ -375,6 +377,31 @@ def login():
     user_agent = request.headers.get('User-Agent')
     success = False
 
+    # Handle backup code submission (from modal)
+    if request.method == 'POST' and 'backup_code' in request.form:
+        code_entered = request.form['backup_code'].strip()
+        stmt = select(User).filter_by(email=request.form.get('email', '').strip().lower())
+        user = db.session.scalars(stmt).first()
+
+        if user and user.backup_codes:
+            codes = user.backup_codes.splitlines()
+            for hashed in codes:
+                if check_password_hash(hashed, code_entered):
+                    # Valid backup code → consume it
+                    codes.remove(hashed)
+                    user.backup_codes = "\n".join(codes) if codes else None
+                    db.session.commit()
+
+                    session['bypass_security'] = True
+                    session['last_active'] = datetime.utcnow().isoformat()
+                    login_user(user)
+
+                    flash("Logged in using backup code. Security restrictions bypassed.", "info")
+                    return redirect(url_for('profile'))
+
+        flash("Invalid or used backup code.", "danger")
+        return redirect(url_for('login'))
+
     if form.validate_on_submit():
         email = form.email.data.strip().lower()
         stmt = select(User).filter_by(email=email)
@@ -414,27 +441,38 @@ def login():
                 # → region‐lock
                 location = get_location_data()
                 current_country = location.get('country')
-                if user.region_lock_enabled:
+                country = get_location_data().get('country')
+
+                if user.region_lock_enabled and not session.get('bypass_security'):
                     if user.last_country and user.last_country != current_country:
-                        flash(
-                          f"Login blocked: region mismatch. Expected {user.last_country}, got {current_country}.",
-                          "danger"
-                        )
+                        session['backup_user_id'] = user.id  # Store for modal use
+                        flash(Markup(
+                            f"Login blocked: region mismatch. Expected <strong>{user.last_country}</strong>, got <strong>{current_country}</strong>. "
+                            '<a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
+                        ), "danger")
                         return redirect(url_for('login'))
+
                     elif not user.last_country and current_country:
                         user.last_country = current_country
                         db.session.commit()
 
                 # User defined time based access control
-                if is_user_blocked_by_time(user):
-                    flash("Login blocked during your restricted hours.", "danger")
+                if is_user_blocked_by_time(user) and not session.get('bypass_security'):
+                    session['backup_user_id'] = user.id
+                    flash(Markup(
+                        'Login blocked during your restricted hours. '
+                        '<a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
+                    ), "danger")
                     return redirect(url_for('login'))
 
                 user_ip = get_public_ip()
-                if user.ip_whitelist:
+                if user.ip_whitelist and not session.get('bypass_security'):
                     allowed_ips = [ip.strip() for ip in user.ip_whitelist.split(",")]
                     if user_ip not in allowed_ips:
-                        flash("Your IP is not authorized to access this account.", "danger")
+                        session['backup_user_id'] = user.id
+                        flash(Markup(
+                            'Your IP is not authorized. <a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
+                        ), "danger")
                         return redirect(url_for('login'))
 
                 # → TOTP 2FA
@@ -468,6 +506,8 @@ def login():
                 login_user(user)
                 session['last_active'] = datetime.utcnow().isoformat()
                 success = True
+                session.pop('bypass_security', None)
+                session.pop('backup_user_id', None)
                 send_login_alert_email(user)
 
                 # log audit
@@ -570,27 +610,35 @@ def auth_callback():
 
     # ── Region Lock (unchanged) ─────────────────────────────────
     country = get_location_data().get('country')
-    if user.region_lock_enabled:
-        if user.last_country and user.last_country != country:
-            flash(
-              f"Login blocked: region mismatch. Expected {user.last_country}, got {country}.",
-              "danger"
-            )
+    if user.region_lock_enabled and not session.get('bypass_security'):
+        if user.last_country and user.last_country != current_country:
+            session['backup_user_id'] = user.id  # Store for modal use
+            flash(Markup(
+                f"Login blocked: region mismatch. Expected <strong>{user.last_country}</strong>, got <strong>{current_country}</strong>. "
+                '<a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
+            ), "danger")
             return redirect(url_for('login'))
         if not user.last_country:
             user.last_country = country
             db.session.commit()
 
     # User defined time based access control
-    if is_user_blocked_by_time(user):
-        flash("Login blocked during your restricted hours.", "danger")
+    if is_user_blocked_by_time(user) and not session.get('bypass_security'):
+        session['backup_user_id'] = user.id
+        flash(Markup(
+            'Login blocked during your restricted hours. '
+            '<a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
+        ), "danger")
         return redirect(url_for('login'))
 
     user_ip = get_public_ip()
-    if user.ip_whitelist:
+    if user.ip_whitelist and not session.get('bypass_security'):
         allowed_ips = [ip.strip() for ip in user.ip_whitelist.split(",")]
         if user_ip not in allowed_ips:
-            flash("Your IP is not authorized to access this account.", "danger")
+            session['backup_user_id'] = user.id
+            flash(Markup(
+                'Your IP is not authorized. <a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
+            ), "danger")
             return redirect(url_for('login'))
 
     # ── TOTP 2FA ───────────────────────────────────────────────
@@ -617,6 +665,9 @@ def auth_callback():
     # ── Final login ───────────────────────────────────────────
     login_user(user)
     session['last_active'] = datetime.utcnow().isoformat()
+    success = True
+    session.pop('bypass_security', None)
+    session.pop('backup_user_id', None)
     send_login_alert_email(user)
 
     # Prompt for birthdate if missing
@@ -624,9 +675,6 @@ def auth_callback():
         return redirect(url_for('collect_birthdate'))
 
     return redirect(url_for('profile'))
-
-
-
 
 @app.route('/collect_birthdate', methods=['GET','POST'])
 @login_required
@@ -766,13 +814,44 @@ def two_factor():
     user = db.session.get(User, user_id)
     form = OTPForm()
     error = None
+    backup_code_error = None
     attempts = session.get('login_otp_attempts', 0)
 
-    if attempts >= 3:
-        flash('Too many failed attempts. Please log in again.', 'danger')
-        session.pop('pre_2fa_user_id', None)
-        return redirect(url_for('login'))
+    # ✅ Backup code modal submission
+    if request.method == 'POST' and 'backup_code' in request.form:
+        entered = request.form.get('backup_code', '').strip()
+        if user.backup_codes:
+            codes = user.backup_codes.splitlines()
+            for hashed in codes:
+                if check_password_hash(hashed, entered):
+                    codes.remove(hashed)
+                    user.backup_codes = "\n".join(codes) if codes else None
+                    db.session.commit()
 
+                    session.pop('pre_2fa_user_id', None)
+                    session['bypass_security'] = True
+                    login_user(user)
+                    session['last_active'] = datetime.utcnow().isoformat()
+
+                    # Audit log
+                    ip, location_str, _ = get_ip_and_location()
+                    user_agent = request.headers.get('User-Agent')
+                    db.session.add(LoginAuditLog(
+                        user_id=user.id,
+                        email=user.email,
+                        success=True,
+                        ip_address=ip,
+                        user_agent=user_agent,
+                        location=location_str
+                    ))
+                    db.session.commit()
+
+                    send_login_alert_email(user)
+                    flash("Logged in using backup code.", "info")
+                    return redirect(url_for('profile'))
+        backup_code_error = "Invalid or used backup code."
+
+    # ✅ Standard OTP check
     if form.validate_on_submit():
         token = form.token.data.strip()
         if not user.otp_expiry or datetime.utcnow() > user.otp_expiry:
@@ -791,7 +870,6 @@ def two_factor():
             user.otp_expiry = None
             db.session.commit()
 
-            # ✅ Add audit log here
             ip, location_str, _ = get_ip_and_location()
             user_agent = request.headers.get('User-Agent')
             db.session.add(LoginAuditLog(
@@ -807,8 +885,15 @@ def two_factor():
             send_login_alert_email(user)
             return redirect(url_for('profile'))
 
+    if attempts >= 3:
+        flash('Too many failed attempts. Please log in again.', 'danger')
+        session.pop('pre_2fa_user_id', None)
+        return redirect(url_for('login'))
+
     resent = bool(request.args.get('resent'))
-    return render_template('two_factor.html', form=form, error=error, resent=resent)
+    return render_template('two_factor.html', form=form, error=error,
+                           backup_code_error=backup_code_error, resent=resent)
+
 
 
 @app.route('/resend_otp/<context>')
@@ -911,7 +996,7 @@ def resend_otp(context):
 
 
 @app.route('/verify_reset_otp', methods=['GET', 'POST'])
-def verify_reset_otp():
+def verify_reset_otp(): #THIS IS OTP FOR RESET PASSWORD
     if 'reset_user_id' not in session:
         return redirect(url_for('forgot_password'))
 
@@ -1116,13 +1201,20 @@ def security():
     restriction_form = LoginRestrictionForm()
     ip_form = IPWhitelistForm()
 
+    # --- Handle Close Backup Modal ---
+    if 'close_backup_modal' in request.form:
+        session.pop('backup_codes', None)
+        return redirect(url_for('security'))
+
+    # --- Handle Remove IP Whitelist ---
     if 'remove_ip_whitelist' in request.form:
         current_user.ip_whitelist = None
         db.session.commit()
         flash("IP whitelist removed.", "info")
         return redirect(url_for('security'))
 
-    elif 'ip_submit' in request.form:
+    # --- Handle Update IP Whitelist ---
+    if 'ip_submit' in request.form:
         if ip_form.validate_on_submit():
             raw_input = ip_form.whitelist.data.strip()
             clean_ips = ",".join(sorted(set(ip.strip() for ip in raw_input.split(",") if ip.strip())))
@@ -1134,7 +1226,16 @@ def security():
         else:
             flash("Invalid IP input. Please check your entries.", "danger")
 
-    elif 'restriction_submit' in request.form:
+    # --- Handle Remove Time Restriction ---
+    if 'remove_restriction' in request.form:
+        current_user.login_block_start = None
+        current_user.login_block_end = None
+        db.session.commit()
+        flash("Login restriction removed.", "info")
+        return redirect(url_for('security'))
+
+    # --- Handle Login Restriction ---
+    if 'restriction_submit' in request.form:
         if restriction_form.validate_on_submit():
             current_user.login_block_start = restriction_form.block_start.data
             current_user.login_block_end = restriction_form.block_end.data
@@ -1142,16 +1243,16 @@ def security():
             flash("Login restriction updated.", "success")
             return redirect(url_for('security'))
 
+    # --- Prepopulate forms on GET ---
+    ip_form.whitelist.data = current_user.ip_whitelist or ""
     restriction_form.block_start.data = current_user.login_block_start
     restriction_form.block_end.data = current_user.login_block_end
 
-    user_ip = get_public_ip()
     return render_template('security.html',
                            toggle_form=toggle_form,
                            restriction_form=restriction_form,
-                           ip_form=ip_form, user_ip=user_ip)
-
-
+                           ip_form=ip_form,
+                           user_ip=get_public_ip())
 
 @app.route('/toggle_region_lock', methods=['POST'])
 @login_required
@@ -1171,6 +1272,91 @@ def toggle_region_lock():
     db.session.commit()
     flash(message, "info")
     return redirect(url_for('security'))
+
+@app.route('/generate_backup_codes', methods=['POST'])
+@login_required
+def generate_backup_codes():
+    # Generate 8 one-time use codes
+    raw_codes = [secrets.token_hex(4).upper() for _ in range(8)]
+    hashed_codes = [generate_password_hash(code) for code in raw_codes]
+
+    current_user.backup_codes = "\n".join(hashed_codes)
+    db.session.commit()
+
+    # Store raw in session temporarily to show in modal
+    session['backup_codes'] = raw_codes
+    return redirect(url_for('security'))
+
+
+@app.route('/download_backup_codes')
+@login_required
+def download_backup_codes():
+    raw_codes = session.get('backup_codes')
+    if not raw_codes:
+        flash("No backup codes available. Please generate them first.", "warning")
+        return redirect(url_for('security'))
+
+    content = "\n".join(raw_codes)
+    response = make_response(content)
+    response.headers["Content-Disposition"] = "attachment; filename=backup_codes.txt"
+    response.mimetype = "text/plain"
+    return response
+
+
+@app.route('/complete_backup_login')
+def complete_backup_login():
+    user_id = session.pop('pre_2fa_user_id', None)
+    if not user_id:
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    if not user:
+        return redirect(url_for('login'))
+
+    login_user(user)
+    session['last_active'] = datetime.utcnow().isoformat()
+    session.pop('bypass_security', None)
+
+    # Add audit log / known device if needed
+    ...
+
+    flash("Logged in using backup code. Some restrictions were bypassed.", "info")
+    return redirect(url_for('profile'))
+
+@app.route('/use_backup_code', methods=['POST'])
+def use_backup_code():
+    code = request.form.get('backup_code', '').strip()
+    user_id = session.get('pre_2fa_user_id') or session.get('backup_user_id')
+    if not user_id:
+        flash("Session expired. Please try logging in again.", "warning")
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for('login'))
+
+    if user.backup_codes:
+        codes = user.backup_codes.splitlines()
+        for hashed in codes:
+            if check_password_hash(hashed, code):
+                # ✅ Consume the code
+                codes.remove(hashed)
+                user.backup_codes = "\n".join(codes) if codes else None
+                db.session.commit()
+
+                # ✅ Bypass security locks
+                session['bypass_security'] = True
+
+                # Remove block triggers
+                session.pop('pre_2fa_user_id', None)
+                session.pop('backup_user_id', None)
+
+                flash("Backup code accepted. Please continue logging in.", "info")
+                return redirect(url_for('login'))
+
+    flash("Invalid or used backup code.", "danger")
+    return redirect(url_for('login'))
 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

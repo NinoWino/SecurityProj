@@ -29,8 +29,43 @@
     <div class="text-center mt-3">
       Didn’t receive code? <a href="{{ url_for('resend_otp', context='login') }}">Resend</a>
     </div>
+    <div class="text-center mt-3">
+      <button type="button" class="btn btn-link text-muted" data-bs-toggle="modal" data-bs-target="#backupCodeModal">
+        Use Backup Code Instead
+      </button>
+    </div>
+
   </div>
 </div>
+<div class="modal fade" id="backupCodeModal" tabindex="-1" aria-labelledby="backupCodeModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('two_factor') }}">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title" id="backupCodeModalLabel">Enter Backup Code</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">Enter one of your one-time backup codes to bypass 2FA.</p>
+          {% if backup_code_error %}
+            <div class="alert alert-danger">{{ backup_code_error }}</div>
+          {% endif %}
+          <input type="text" name="backup_code" class="form-control" placeholder="Backup Code" required>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary w-100">Submit Code</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% if backup_code_error %}
+<script>
+  var modal = new bootstrap.Modal(document.getElementById('backupCodeModal'));
+  modal.show();
+</script>
+{% endif %}
+
 <style>
 .verification-input {
   width: 3rem;

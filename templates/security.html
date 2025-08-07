@@ -64,6 +64,21 @@
     </div>
 
     <h5 class="mb-3 border-bottom pb-2">
+      Backup Codes
+      <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip"
+         title="One-time use codes to access your account if you lose access to 2FA. Store them securely."></i>
+    </h5>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <span class="badge bg-danger">Disabled</span>
+  <form method="POST" action="{{ url_for('generate_backup_codes') }}" class="d-inline">
+    <button type="submit" class="btn btn-outline-secondary">
+      Generate Backup Codes
+    </button>
+  </form>
+</div>
+
+
+    <h5 class="mb-3 border-bottom pb-2">
       Region Locking
       <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Only allow log-ins from the location where this was enabled. When this is on, any sign-in attempt from a new country or region is blocked"></i>
     </h5>
@@ -205,6 +220,35 @@
     </div>
   </div>
 </div>
+{% if session.backup_codes %}
+  <div class="modal fade show" id="backupModal" tabindex="-1" style="display: block;" aria-modal="true" role="dialog">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title">Your New Backup Codes</h5>
+        </div>
+        <div class="modal-body">
+          <p>Each code is usable only once. Store them in a safe place.</p>
+          <pre class="bg-light p-3 border rounded">
+{% for code in session.backup_codes %}
+{{ code }}
+{% endfor %}
+          </pre>
+          <a href="{{ url_for('download_backup_codes') }}" class="btn btn-outline-dark w-100 mt-2">
+            Download as .txt
+          </a>
+        </div>
+        <div class="modal-footer">
+        <form method="POST">
+          <button type="submit" name="close_backup_modal" value="1" class="btn btn-primary">Done</button>
+        </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop fade show"></div>
+{% endif %}
+
 
 <script>
   var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))

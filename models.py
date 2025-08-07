@@ -42,6 +42,7 @@ class User(UserMixin, db.Model):
     login_block_start = db.Column(Time, nullable=True)  # e.g., 23:00
     login_block_end = db.Column(Time, nullable=True)  # e.g., 06:00
     ip_whitelist = db.Column(db.Text, nullable=True)  # Comma-separated IPs
+    backup_codes = db.Column(db.Text, nullable=True)  # Stores hashed codes, newline-separated
 
     password_history = db.Column(PickleType, default=list)
     password_last_changed = db.Column(DateTime, default=datetime.utcnow)

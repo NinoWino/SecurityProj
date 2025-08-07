@@ -85,6 +85,26 @@
     </form>
   </div>
 </div>
+<!-- Backup Code Modal -->
+<div class="modal fade" id="backupCodeModal" tabindex="-1" aria-labelledby="backupCodeModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('use_backup_code') }}">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title" id="backupCodeModalLabel">Enter Backup Code</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="text" name="backup_code" class="form-control" placeholder="Backup Code" required>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary w-100">Continue</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 
 <script>
   document.getElementById('toggleLoginPassword').addEventListener('click', function() {
