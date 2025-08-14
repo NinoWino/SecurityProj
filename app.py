@@ -318,7 +318,7 @@ def get_ip_and_location():
         return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
 
 
-# System Audit Log
+
 def log_system_action(
     user_id,
     action_type,
@@ -332,16 +332,18 @@ def log_system_action(
     request_id=None
 ):
     try:
-        from flask import session, request, g
-        ip = request.remote_addr
+        print(f"[DEBUG] log_system_action CALLED: {action_type}, user={user_id}")
+        ip, location,_ = get_ip_and_location()
         user_agent = request.headers.get('User-Agent', 'Unknown')
         endpoint = request.endpoint
         http_method = request.method
-
         session_id = session_id or session.get('session_id')
+
+        # ✅ Add these lines
         request_id = request_id or getattr(g, 'request_id', None)
         role_id = role_id_at_action_time or (current_user.role_id if current_user.is_authenticated else None)
 
+        # Store changes as JSON if provided as dict
         if isinstance(changed_fields, dict):
             changed_fields = json.dumps(changed_fields)
 
@@ -358,14 +360,16 @@ def log_system_action(
             changed_fields=changed_fields,
             ip_address=ip,
             user_agent=user_agent,
-            location="N/A",  # Add geo-IP later if needed
-            role_id_at_action_time=role_id,
-            request_id=request_id
+            location=location,
+            role_id_at_action_time = role_id,
+            request_id = request_id
         )
         db.session.add(log)
         db.session.commit()
+        print("[DEBUG] log_system_action COMMIT OK")
     except Exception as e:
-        print(f"[AuditLog Error] {e}")
+        print(f"[AuditLog Error] Failed to log action '{action_type}':", e)
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #ALL OF JUNYN FUNCTIONS PUT HERE
