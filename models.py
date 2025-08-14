@@ -11,38 +11,39 @@ db = SQLAlchemy()
 
 class Role(db.Model):
     __tablename__ = 'roles'
-    id   = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(20), unique=True, nullable=False)
     users = db.relationship('User', back_populates='role')
+
 
 class User(UserMixin, db.Model):
     __tablename__ = 'user'
 
-    id                 = db.Column(db.Integer, primary_key=True)
-    username           = db.Column(db.String(50), unique=True, nullable=False)
-    email              = db.Column(db.String(100), unique=True, nullable=False)
-    password           = db.Column(db.String(255), nullable=False)
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(20), unique=True, nullable=True)
     birthdate = db.Column(db.Date, nullable=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     role = db.relationship('Role', back_populates='users')
 
     # Lockout & 2FA
-    failed_attempts    = db.Column(db.Integer, default=0)
-    last_failed_login  = db.Column(db.DateTime, nullable=True)
-    is_locked          = db.Column(db.Boolean, default=False)
+    failed_attempts = db.Column(db.Integer, default=0)
+    last_failed_login = db.Column(db.DateTime, nullable=True)
+    is_locked = db.Column(db.Boolean, default=False)
     two_factor_enabled = db.Column(db.Boolean, default=True)
-    otp_code           = db.Column(db.String(512), nullable=True)
-    otp_expiry         = db.Column(db.DateTime, nullable=True)
+    otp_code = db.Column(db.String(512), nullable=True)
+    otp_expiry = db.Column(db.DateTime, nullable=True)
     totp_secret = db.Column(db.String(32), nullable=True)
     preferred_2fa = db.Column(db.String(10), default='email')
     region_lock_enabled = db.Column(db.Boolean, default=False)
     last_country = db.Column(db.String(64))
     signup_method = db.Column(db.String(20), nullable=False, default='email')
     login_block_start = db.Column(Time, nullable=True)  # e.g., 23:00
-    login_block_end = db.Column(Time, nullable=True)  # e.g., 06:00
-    ip_whitelist = db.Column(db.Text, nullable=True)  # Comma-separated IPs
-    backup_codes = db.Column(db.Text, nullable=True)  # Stores hashed codes, newline-separated
+    login_block_end = db.Column(Time, nullable=True)    # e.g., 06:00
+    ip_whitelist = db.Column(db.Text, nullable=True)    # Comma-separated IPs
+    backup_codes = db.Column(db.Text, nullable=True)    # Stores hashed codes, newline-separated
 
     password_history = db.Column(PickleType, default=list)
     password_last_changed = db.Column(DateTime, default=datetime.utcnow)
@@ -51,8 +52,9 @@ class User(UserMixin, db.Model):
     security_answer_hash = db.Column(db.String(255), nullable=True)
     is_active = db.Column(db.Boolean, default=True)
 
-    #Audit
+    # Audit
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 class LoginAuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -64,6 +66,7 @@ class LoginAuditLog(db.Model):
     location = db.Column(db.String(255))
     timestamp = db.Column(db.DateTime, server_default=db.func.current_timestamp())
 
+
 class SystemAuditLog(db.Model):
     __tablename__ = 'system_audit_log'
 
@@ -71,6 +74,15 @@ class SystemAuditLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     action_type = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text, nullable=True)
+    role_id_at_action_time = db.Column(db.Integer, nullable=True)
+    request_id = db.Column(db.String(64), nullable=True)
+    log_level = db.Column(db.String(20), default='INFO')           # INFO, WARNING, ERROR
+    category = db.Column(db.String(50), default='GENERAL')         # AUTH, ADMIN, PROFILE, SECURITY, etc.
+    endpoint = db.Column(db.String(255))                           # Flask route
+    http_method = db.Column(db.String(10))                         # GET, POST, etc.
+    session_id = db.Column(db.String(64), nullable=True)           # Generated per session
+    affected_object_id = db.Column(db.String(64), nullable=True)   # Optional: e.g., User ID being edited
+    changed_fields = db.Column(db.Text, nullable=True)             # JSON or string of changes
     ip_address = db.Column(db.String(45))
     user_agent = db.Column(db.Text)
     location = db.Column(db.String(255))
@@ -88,7 +100,6 @@ class Product(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-
 class KnownDevice(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
@@ -98,6 +109,7 @@ class KnownDevice(db.Model):
     location = db.Column(db.String(255))
     first_seen = db.Column(db.DateTime, server_default=db.func.current_timestamp())
     last_seen = db.Column(db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+
 
 # Role IDs correspond to hierarchy levels:
 # 1 = user (lowest), 2 = staff, 3 = admin (highest)
