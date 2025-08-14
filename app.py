@@ -319,21 +319,53 @@ def get_ip_and_location():
 
 
 # System Audit Log
-def log_system_action(user_id, action_type, description=None):
-    ip, location = get_ip_and_location()
-    user_agent = request.headers.get('User-Agent')
+def log_system_action(
+    user_id,
+    action_type,
+    description=None,
+    log_level='INFO',
+    category='GENERAL',
+    affected_object_id=None,
+    changed_fields=None,
+    session_id=None,
+    role_id_at_action_time=None,
+    request_id=None
+):
+    try:
+        from flask import session, request, g
+        ip = request.remote_addr
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        endpoint = request.endpoint
+        http_method = request.method
 
-    log = SystemAuditLog(
-        user_id=user_id,
-        action_type=action_type,
-        description=description,
-        ip_address=ip,
-        user_agent=user_agent,
-        location=location
-    )
-    db.session.add(log)
-    db.session.commit()
+        session_id = session_id or session.get('session_id')
+        request_id = request_id or getattr(g, 'request_id', None)
+        role_id = role_id_at_action_time or (current_user.role_id if current_user.is_authenticated else None)
 
+        if isinstance(changed_fields, dict):
+            changed_fields = json.dumps(changed_fields)
+
+        log = SystemAuditLog(
+            user_id=user_id,
+            action_type=action_type,
+            description=description,
+            log_level=log_level,
+            category=category,
+            endpoint=endpoint,
+            http_method=http_method,
+            session_id=session_id,
+            affected_object_id=affected_object_id,
+            changed_fields=changed_fields,
+            ip_address=ip,
+            user_agent=user_agent,
+            location="N/A",  # Add geo-IP later if needed
+            role_id_at_action_time=role_id,
+            request_id=request_id
+        )
+        db.session.add(log)
+        db.session.commit()
+    except Exception as e:
+        print(f"[AuditLog Error] {e}")
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #ALL OF JUNYN FUNCTIONS PUT HERE
@@ -433,6 +465,25 @@ def login():
                     user.is_locked = True
                 db.session.commit()
                 error = 'Incorrect email or password.'
+
+                # Log failed login
+                db.session.add(LoginAuditLog(
+                    user_id=user.id,
+                    email=user.email,
+                    success=False,
+                    ip_address=ip,
+                    user_agent=user_agent,
+                    location=location_str
+                ))
+                log_system_action(
+                    user_id=user.id,
+                    action_type="Login Failed",
+                    description="Failed login attempt due to incorrect credentials.",
+                    category="AUTH",
+                    log_level="WARNING"
+                )
+                db.session.commit()
+
             else:
                 # correct password → reset counter
                 user.failed_attempts = 0
@@ -446,6 +497,14 @@ def login():
                 if user.region_lock_enabled and not session.get('bypass_security'):
                     if user.last_country and user.last_country != current_country:
                         session['backup_user_id'] = user.id  # Store for modal use
+                        log_system_action(
+                            user_id=user.id,
+                            action_type="Login Blocked",
+                            description=f"Region mismatch. Expected {user.last_country}, got {current_country}.",
+                            category="AUTH",
+                            log_level="WARNING"
+                        )
+
                         flash(Markup(
                             f"Login blocked: region mismatch. Expected <strong>{user.last_country}</strong>, got <strong>{current_country}</strong>. "
                             '<a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
@@ -510,8 +569,6 @@ def login():
                 session.pop('backup_user_id', None)
                 send_login_alert_email(user)
 
-                # log audit
-                _, location_str, _ = get_ip_and_location()
                 db.session.add(LoginAuditLog(
                     user_id=user.id,
                     email=user.email,
@@ -520,6 +577,13 @@ def login():
                     user_agent=user_agent,
                     location=location_str
                 ))
+
+                log_system_action(
+                    user_id=user.id,
+                    action_type="Login",
+                    description="User successfully logged in via email.",
+                    category="AUTH"
+                )
                 db.session.commit()
 
                 # known device tracking
@@ -621,6 +685,13 @@ def auth_callback():
         if not user.last_country:
             user.last_country = country
             db.session.commit()
+            # ✅ Log the login
+        log_system_action(
+            user_id=user.id,
+            action_type="Login (Google)",
+            description="User successfully logged in via Google.",
+            category="AUTH"
+        )
 
     # User defined time based access control
     if is_user_blocked_by_time(user) and not session.get('bypass_security'):
@@ -720,6 +791,13 @@ def change_password():
             current_user.password = generate_password_hash(form.new_password.data)
             db.session.commit()
 
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Password Change",
+                description="User changed their password",
+                category="SECURITY"
+            )
+
             # Invalidate session and force re-login
             logout_user()
             session.clear()
@@ -802,6 +880,22 @@ def toggle_2fa():
             current_user.preferred_2fa = 'email'
             current_user.totp_secret = None  # disable authenticator app
         db.session.commit()
+
+        # ✅ Log the change with session_id and other metadata
+        log_system_action(
+            user_id=current_user.id,
+            action_type="2FA Toggled",
+            description=f"2FA is now {'enabled' if current_user.two_factor_enabled else 'disabled'}",
+            category="SECURITY",
+            affected_object_id=current_user.id,
+            changed_fields={
+                "two_factor_enabled": [original_value, current_user.two_factor_enabled]
+            },
+            session_id=session.get('session_id'),
+            role_id_at_action_time=getattr(current_user, 'role_id', None),
+            request_id=request.headers.get('X-Request-ID')  # Optional: if you're tracking it
+        )
+
     return redirect(url_for('security'))
 
 
@@ -1026,6 +1120,13 @@ def verify_reset_otp(): #THIS IS OTP FOR RESET PASSWORD
             user.otp_expiry = None
             db.session.commit()
 
+            log_system_action(
+                user_id=user.id,
+                action_type="Password Reset",
+                description="User reset password via email OTP",
+                category="SECURITY"
+            )
+
             # clear any logged‐in session state
             session.pop('reset_user_id', None)
             session.pop('reset_otp_attempts', None)
@@ -1079,6 +1180,14 @@ def setup_totp_step3():
             current_user.preferred_2fa = 'totp'
             current_user.two_factor_enabled = False
             db.session.commit()
+
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Authenticator Setup",
+                description="User set up authenticator app (TOTP)",
+                category="SECURITY"
+            )
+
             return redirect(url_for('setup_totp_done'))
         else:
             error = "Invalid code. Try again."
@@ -1157,6 +1266,12 @@ def disable_totp():
     current_user.totp_secret = None
     current_user.preferred_2fa = 'email'
     db.session.commit()
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Authenticator Disabled",
+        description="User disabled TOTP 2FA",
+        category="SECURITY"
+    )
     flash("Authenticator App has been disabled.", "info")
     return redirect(url_for('security'))
 
@@ -1174,6 +1289,12 @@ def fallback_to_email_otp():
     user.otp_code = generate_password_hash(code)
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     db.session.commit()
+    log_system_action(
+        user_id=user.id,
+        action_type="2FA Fallback to Email",
+        description="User switched from TOTP to email OTP for login",
+        category="AUTH"
+    )
 
     msg = Message(
         subject="Backup Login Code",
@@ -1257,6 +1378,8 @@ def security():
 @app.route('/toggle_region_lock', methods=['POST'])
 @login_required
 def toggle_region_lock():
+    original_value = current_user.region_lock_enabled
+    current_user.region_lock_enabled = not original_value
     current_user.region_lock_enabled = not current_user.region_lock_enabled
 
     message = ""
@@ -1270,6 +1393,22 @@ def toggle_region_lock():
         message = "Region lock disabled."
 
     db.session.commit()
+
+    # ✅ Log the change with session_id and other metadata
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Region Lock Toggled",
+        description=message,
+        category="SECURITY",
+        affected_object_id=current_user.id,
+        changed_fields={
+            "region_lock_enabled": [original_value, current_user.region_lock_enabled]
+        },
+        session_id=session.get('session_id'),
+        role_id_at_action_time=getattr(current_user, 'role_id', None),
+        request_id=request.headers.get('X-Request-ID')  # Optional: for traceability
+    )
+
     flash(message, "info")
     return redirect(url_for('security'))
 
@@ -1512,8 +1651,31 @@ def change_username():
 
     if form.validate_on_submit():
         try:
+            # ✅ Snapshot original data
+            original_data = {
+                "username": current_user.username
+            }
+
+            # ✅ Apply change
             current_user.username = form.new_username.data.strip()
+
+            # ✅ Detect what changed
+            changed = detect_changes(current_user, original_data, ["username"])
+
             db.session.commit()
+
+            # ✅ Only log if a change actually occurred
+
+            if changed:
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="Username Change",
+                    description=f"User changed their username",
+                    category="PROFILE",
+                    affected_object_id=current_user.id,
+                    changed_fields=changed
+                )
+
             flash('Username changed successfully.', 'success')
             return redirect(url_for('profile'))
         except Exception:
@@ -1541,7 +1703,16 @@ def change_email():
         try:
             # normalize to lowercase to avoid dupes
             current_user.email = form.new_email.data.strip().lower()
+            old_email = current_user.email
             db.session.commit()
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Email Change",
+                description=f"Changed email from {old_email} to {current_user.email}",
+                category="PROFILE",
+                changed_fields={"email": [old_email, current_user.email]}
+            )
+
             flash('Email changed successfully.', 'success')
             return redirect(url_for('profile'))
         except Exception:
@@ -1571,6 +1742,19 @@ def delete_account():
             return redirect(url_for('delete_account'))
 
         try:
+            log_system_action(
+                user_id=user.id,
+                action_type="Account Deletion",
+                description="User deleted their account.",
+                category="SECURITY",
+                affected_object_id=user.id,
+                changed_fields={
+                    "account_status": ["active", "deleted"],
+                    "username": user.username,
+                    "email": user.email
+                }
+            )
+
             logout_user()
             db.session.delete(user)
             db.session.commit()
@@ -1614,6 +1798,14 @@ def force_password_reset():
                 user.password_history = user.password_history[-3:]
 
             db.session.commit()
+            log_system_action(
+                user_id=user.id,
+                action_type="Forced Password Reset",
+                description="User reset password after expiration.",
+                category="SECURITY",
+                changed_fields={"password": ["previous_hash", "new_hash_truncated"]}
+            )
+
             session.pop('expired_user_id', None)
             flash('Password updated successfully. Please log in.', 'success')
             return redirect(url_for('login'))
@@ -1876,6 +2068,19 @@ def add_user():
         new_user = User(username=username, email=email, password=password, role_id=role_id)
         db.session.add(new_user)
         db.session.commit()
+        log_system_action(
+            user_id=current_user.id,
+            action_type="Admin Add User",
+            description=f"Created new user: {email}",
+            category="ADMIN",
+            affected_object_id=new_user.id,
+            changed_fields={
+                "username": [None, username],
+                "email": [None, email],
+                "role_id": [None, role_id]
+            }
+        )
+
         flash('New user added.', 'success')
         return redirect(url_for('manage_users'))
 
@@ -1888,13 +2093,40 @@ def edit_user(user_id):
     user = User.query.get_or_404(user_id)
 
     if request.method == 'POST':
-        user.username = request.form['username']
-        user.email = request.form['email']
+        # ✅ Snapshot original values before applying changes
+        original_data = {
+            "username": user.username,
+            "email": user.email,
+            "role_id": user.role_id
+        }
+
+        # ✅ Apply new values from form
+        user.username = request.form['username'].strip()
+        user.email = request.form['email'].strip()
         user.role_id = int(request.form['role_id'])
-        if request.form['password']:
-            user.password = generate_password_hash(request.form['password'])
-        db.session.commit()
-        flash('User updated.', 'success')
+
+        # ✅ Detect changes before committing
+        changed = detect_changes(user, original_data, ["username", "email", "role_id"])
+
+        try:
+            db.session.commit()
+
+            # ✅ Only log if something actually changed
+            if changed:
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="Admin Edit User",
+                    description=f"Edited user ID {user.id}",
+                    category="ADMIN",
+                    affected_object_id=user.id,
+                    changed_fields=changed
+                )
+
+            flash('User updated.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash("Failed to update user. Please try again.", "danger")
+
         return redirect(url_for('manage_users'))
 
     return render_template('admin_user_form.html', action='Edit', user=user)
@@ -1904,8 +2136,22 @@ def edit_user(user_id):
 @role_required(3)
 def toggle_user_activation(user_id):
     user = User.query.get_or_404(user_id)
+    original_status = user.is_active
     user.is_active = not user.is_active
     db.session.commit()
+
+    # ✅ Log the change
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Admin Toggled User Activation",
+        description=f"{user.username} is now {'active' if user.is_active else 'deactivated'}",
+        category="ADMIN",
+        affected_object_id=user.id,
+        changed_fields={
+            "is_active": [original_status, user.is_active]
+        }
+    )
+
     flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
     return redirect(url_for('manage_users'))
 
