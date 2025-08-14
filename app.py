@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify
 from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select
+from sqlalchemy import select,func
 from flask_login import (
     LoginManager, login_user, logout_user,
     login_required, current_user
@@ -2013,33 +2013,86 @@ def admin_dashboard():
 @login_required
 @role_required(3)
 def admin_overview():
-    utc_now = datetime.utcnow()
-    day_ago = utc_now - timedelta(days=1)
 
-    total_users = User.query.count()
-    new_signups = User.query.filter(User.created_at >= day_ago).count()
-    successful_logins_24h = LoginAuditLog.query.filter(
-        LoginAuditLog.timestamp >= day_ago,
-        LoginAuditLog.success == True
-    ).count()
 
-    failed_logins_24h = LoginAuditLog.query.filter(
-        LoginAuditLog.timestamp >= day_ago,
-        LoginAuditLog.success == False
-    ).count()
+   utc_now = datetime.utcnow()
+   day_ago = utc_now - timedelta(days=1)
+   # Top 5 IPs with failed login attempts in the last 24 hours
+   top_failed_ips = db.session.query(
+       LoginAuditLog.ip_address,
+       func.count(LoginAuditLog.id)
+   ).filter(
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.success == False
+   ).group_by(LoginAuditLog.ip_address
+              ).order_by(func.count(LoginAuditLog.id).desc()
+                         ).limit(5).all()
+   total_users = User.query.count()
+   new_signups = User.query.filter(User.created_at >= day_ago).count()
+   successful_logins_24h = LoginAuditLog.query.filter(
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.success == True
+   ).count()
 
-    deactivated_accounts = User.query.filter_by(is_active=False).count()
-    active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
 
-    return render_template(
-        'admin_overview.html',
-        total_users=total_users,
-        new_signups=new_signups,
-        successful_logins_24h=successful_logins_24h,
-        failed_logins_24h=failed_logins_24h,
-        active_today=active_today,
-        deactivated_accounts=deactivated_accounts
-    )
+   failed_logins_24h = LoginAuditLog.query.filter(
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.success == False
+   ).count()
+
+
+   deactivated_accounts = User.query.filter_by(is_active=False).count()
+   active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
+   # Get actual active users in the last 24h
+   active_user_ids = db.session.query(LoginAuditLog.user_id).filter(
+       LoginAuditLog.success == True,
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.user_id != None
+   ).distinct().subquery()
+
+
+   active_users = db.session.query(User).filter(User.id.in_(active_user_ids)).all()
+
+
+   recent_users = User.query.filter(User.created_at >= day_ago).order_by(User.created_at.desc()).limit(10).all()
+
+
+   recent_failed_logins = LoginAuditLog.query.filter(
+       LoginAuditLog.success == False,
+       LoginAuditLog.timestamp >= day_ago
+   ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+
+
+   recent_successful_logins = LoginAuditLog.query.filter(
+       LoginAuditLog.success == True,
+       LoginAuditLog.timestamp >= day_ago
+   ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+   # Get all users (for Total Registered Users)
+   all_users = User.query.order_by(User.id.desc()).limit(100).all()
+
+
+   # Get deactivated accounts
+   deactivated_users = User.query.filter_by(is_active=False).order_by(User.id.desc()).limit(100).all()
+
+
+   return render_template(
+       'admin_overview.html',
+       total_users=total_users,
+       new_signups=new_signups,
+       successful_logins_24h=successful_logins_24h,
+       failed_logins_24h=failed_logins_24h,
+       active_today=active_today,
+       deactivated_accounts=deactivated_accounts,
+       top_failed_ips = top_failed_ips,
+       recent_users = recent_users,
+       recent_failed_logins = recent_failed_logins,
+       recent_successful_logins = recent_successful_logins,
+       active_users = active_users,
+       all_users=all_users,
+       deactivated_users=deactivated_users,
+
+
+   )
 
 @app.route('/admin/users')
 @login_required
@@ -2159,33 +2212,134 @@ def toggle_user_activation(user_id):
     flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
     return redirect(url_for('manage_users'))
 
-@app.route('/admin/security_dashboard')
-@login_required
+@app.route('/security_dashboard')
 @role_required(3)
 def security_dashboard():
-    logs_query = LoginAuditLog.query
+   # --- LOGIN AUDIT LOG FILTERS ---
+   login_query = LoginAuditLog.query
+   email = request.args.get('email')
+   login_user_id = request.args.get('login_user_id')
+   success = request.args.get('success')
+   location = request.args.get('location')
+   ip_address = request.args.get('ip')
+   user_agent = request.args.get('user_agent')
+   login_start_date = request.args.get('login_start_date')
+   login_end_date = request.args.get('login_end_date')
 
-    # Get filter values from request
-    email_filter = request.args.get('email')
-    location_filter = request.args.get('location')
-    success_filter = request.args.get('success')
 
-    if email_filter:
-        logs_query = logs_query.filter(LoginAuditLog.email == email_filter)
-    if location_filter:
-        logs_query = logs_query.filter(LoginAuditLog.location == location_filter)
-    if success_filter in ['0', '1']:
-        logs_query = logs_query.filter(LoginAuditLog.success == bool(int(success_filter)))
+   if email:
+       login_query = login_query.filter(LoginAuditLog.email == email)
 
-    logs = logs_query.order_by(LoginAuditLog.timestamp.desc()).limit(50).all()
-    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(50).all()
 
-    # ✨ Fetch unique filter values
-    emails = [e[0] for e in db.session.query(LoginAuditLog.email).distinct().all()]
-    locations = [l[0] for l in db.session.query(LoginAuditLog.location).distinct().all()]
+   if login_user_id and login_user_id.isdigit():
+       login_query = login_query.filter(LoginAuditLog.user_id == int(login_user_id))
 
-    return render_template('security_dashboard.html', logs=logs, devices=devices,
-                           emails=emails, locations=locations)
+
+   if success in ['0', '1']:
+       login_query = login_query.filter(LoginAuditLog.success == (success == '1'))
+
+
+   if location:
+       login_query = login_query.filter(LoginAuditLog.location == location)
+
+
+   if ip_address:
+       login_query = login_query.filter(LoginAuditLog.ip_address.like(f"%{ip_address}%"))
+
+
+   if user_agent:
+       login_query = login_query.filter(LoginAuditLog.user_agent.ilike(f"%{user_agent}%"))
+
+
+   if login_start_date:
+       try:
+           start_dt = datetime.strptime(login_start_date, "%Y-%m-%d")
+           login_query = login_query.filter(LoginAuditLog.timestamp >= start_dt)
+       except ValueError as e:
+           print("Start date parsing error:", e)
+
+
+   if login_end_date:
+       try:
+           end_dt = datetime.strptime(login_end_date, "%Y-%m-%d") + timedelta(days=1)
+           login_query = login_query.filter(LoginAuditLog.timestamp < end_dt)
+       except ValueError as e:
+           print("End date parsing error:", e)
+
+
+   login_logs = login_query.order_by(LoginAuditLog.timestamp.desc()).limit(100).all()
+
+
+   # --- SYSTEM AUDIT LOG FILTERS ---
+   audit_query = SystemAuditLog.query
+
+
+   user_id = request.args.get('user_id')
+   action_type = request.args.get('action_type')
+   category = request.args.get('category')
+   log_level = request.args.get('log_level')
+   audit_start_date = request.args.get('audit_start_date')
+   audit_end_date = request.args.get('audit_end_date')
+
+
+   if user_id and user_id.isdigit():
+       audit_query = audit_query.filter(SystemAuditLog.user_id == int(user_id))
+
+
+   if action_type:
+       audit_query = audit_query.filter_by(action_type=action_type)
+
+
+   if category:
+       audit_query = audit_query.filter_by(category=category)
+
+
+   if log_level:
+       audit_query = audit_query.filter_by(log_level=log_level)
+
+
+   if audit_start_date:
+       try:
+           audit_start_dt = datetime.strptime(audit_start_date, "%Y-%m-%d")
+           audit_query = audit_query.filter(SystemAuditLog.timestamp >= audit_start_dt)
+       except ValueError as e:
+           print("Audit start date error:", e)
+
+
+   if audit_end_date:
+       try:
+           audit_end_dt = datetime.strptime(audit_end_date, "%Y-%m-%d") + timedelta(days=1)
+           audit_query = audit_query.filter(SystemAuditLog.timestamp < audit_end_dt)
+       except ValueError as e:
+           print("Audit end date error:", e)
+
+
+   audit_logs = audit_query.order_by(SystemAuditLog.timestamp.desc()).limit(200).all()
+
+
+   # --- DROPDOWNS ---
+   user_ids = [user.id for user in db.session.query(User.id).distinct().order_by(User.id).all()]
+   emails = [row.email for row in db.session.query(LoginAuditLog.email).distinct() if row.email]
+   locations = [row.location for row in db.session.query(LoginAuditLog.location).distinct() if row.location]
+   action_types = [row.action_type for row in db.session.query(SystemAuditLog.action_type).distinct() if row.action_type]
+   categories = [row.category for row in db.session.query(SystemAuditLog.category).distinct() if row.category]
+
+
+   # --- KNOWN DEVICES ---
+   devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(100).all()
+
+
+   return render_template(
+       'security_dashboard.html',
+       logs=login_logs,
+       emails=emails,
+       locations=locations,
+       devices=devices,
+       audit_logs=audit_logs,
+       action_types=action_types,
+       categories=categories,
+       user_ids=user_ids,
+   )
 
 @app.route('/contact')
 def contact():
