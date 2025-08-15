@@ -277,11 +277,6 @@ def is_user_blocked_by_time(user):
 
 @app.errorhandler(RateLimitExceeded)
 def handle_rate_limit(e):
-    # You can choose one of the two approaches below:
-
-    # → Option A: Return a flash + redirect (recommended for HTML UI)
-    from flask import flash, redirect, url_for
-
     referer = request.referrer or url_for('login')  # fallback if no referrer
     flash("Too many requests. Please wait and try again.", "warning")
     return redirect(referer)
