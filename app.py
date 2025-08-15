@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify
 from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select
+from sqlalchemy import select,func
 from flask_login import (
     LoginManager, login_user, logout_user,
     login_required, current_user
@@ -314,21 +314,57 @@ def get_ip_and_location():
         return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
 
 
-# System Audit Log
-def log_system_action(user_id, action_type, description=None):
-    ip, location = get_ip_and_location()
-    user_agent = request.headers.get('User-Agent')
 
-    log = SystemAuditLog(
-        user_id=user_id,
-        action_type=action_type,
-        description=description,
-        ip_address=ip,
-        user_agent=user_agent,
-        location=location
-    )
-    db.session.add(log)
-    db.session.commit()
+def log_system_action(
+    user_id,
+    action_type,
+    description=None,
+    log_level='INFO',
+    category='GENERAL',
+    affected_object_id=None,
+    changed_fields=None,
+    session_id=None,
+    role_id_at_action_time=None,
+    request_id=None
+):
+    try:
+        print(f"[DEBUG] log_system_action CALLED: {action_type}, user={user_id}")
+        ip, location,_ = get_ip_and_location()
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        endpoint = request.endpoint
+        http_method = request.method
+        session_id = session_id or session.get('session_id')
+
+        # ✅ Add these lines
+        request_id = request_id or getattr(g, 'request_id', None)
+        role_id = role_id_at_action_time or (current_user.role_id if current_user.is_authenticated else None)
+
+        # Store changes as JSON if provided as dict
+        if isinstance(changed_fields, dict):
+            changed_fields = json.dumps(changed_fields)
+
+        log = SystemAuditLog(
+            user_id=user_id,
+            action_type=action_type,
+            description=description,
+            log_level=log_level,
+            category=category,
+            endpoint=endpoint,
+            http_method=http_method,
+            session_id=session_id,
+            affected_object_id=affected_object_id,
+            changed_fields=changed_fields,
+            ip_address=ip,
+            user_agent=user_agent,
+            location=location,
+            role_id_at_action_time = role_id,
+            request_id = request_id
+        )
+        db.session.add(log)
+        db.session.commit()
+        print("[DEBUG] log_system_action COMMIT OK")
+    except Exception as e:
+        print(f"[AuditLog Error] Failed to log action '{action_type}':", e)
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -586,6 +622,25 @@ def login():
                     user.is_locked = True
                 db.session.commit()
                 error = 'Incorrect email or password.'
+
+                # Log failed login
+                db.session.add(LoginAuditLog(
+                    user_id=user.id,
+                    email=user.email,
+                    success=False,
+                    ip_address=ip,
+                    user_agent=user_agent,
+                    location=location_str
+                ))
+                log_system_action(
+                    user_id=user.id,
+                    action_type="Login Failed",
+                    description="Failed login attempt due to incorrect credentials.",
+                    category="AUTH",
+                    log_level="WARNING"
+                )
+                db.session.commit()
+
             else:
                 # correct password → reset counter
                 user.failed_attempts = 0
@@ -599,6 +654,14 @@ def login():
                 if user.region_lock_enabled and not session.get('bypass_security'):
                     if user.last_country and user.last_country != current_country:
                         session['backup_user_id'] = user.id  # Store for modal use
+                        log_system_action(
+                            user_id=user.id,
+                            action_type="Login Blocked",
+                            description=f"Region mismatch. Expected {user.last_country}, got {current_country}.",
+                            category="AUTH",
+                            log_level="WARNING"
+                        )
+
                         flash(Markup(
                             f"Login blocked: region mismatch. Expected <strong>{user.last_country}</strong>, got <strong>{current_country}</strong>. "
                             '<a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
@@ -696,8 +759,6 @@ def login():
                 session.pop('backup_user_id', None)
                 send_login_alert_email(user)
 
-                # log audit
-                _, location_str, _ = get_ip_and_location()
                 db.session.add(LoginAuditLog(
                     user_id=user.id,
                     email=user.email,
@@ -706,6 +767,13 @@ def login():
                     user_agent=user_agent,
                     location=location_str
                 ))
+
+                log_system_action(
+                    user_id=user.id,
+                    action_type="Login",
+                    description="User successfully logged in via email.",
+                    category="AUTH"
+                )
                 db.session.commit()
 
                 # known device tracking
@@ -807,6 +875,13 @@ def auth_callback():
         if not user.last_country:
             user.last_country = country
             db.session.commit()
+            # ✅ Log the login
+        log_system_action(
+            user_id=user.id,
+            action_type="Login (Google)",
+            description="User successfully logged in via Google.",
+            category="AUTH"
+        )
 
     # User defined time based access control
     if is_user_blocked_by_time(user) and not session.get('bypass_security'):
@@ -937,6 +1012,13 @@ def change_password():
             current_user.password = generate_password_hash(form.new_password.data)
             db.session.commit()
 
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Password Change",
+                description="User changed their password",
+                category="SECURITY"
+            )
+
             # Invalidate session and force re-login
             logout_user()
             session.clear()
@@ -1006,6 +1088,22 @@ def toggle_2fa():
             current_user.preferred_2fa = 'email'
             current_user.totp_secret = None  # disable authenticator app
         db.session.commit()
+
+        # ✅ Log the change with session_id and other metadata
+        log_system_action(
+            user_id=current_user.id,
+            action_type="2FA Toggled",
+            description=f"2FA is now {'enabled' if current_user.two_factor_enabled else 'disabled'}",
+            category="SECURITY",
+            affected_object_id=current_user.id,
+            changed_fields={
+                "two_factor_enabled": [original_value, current_user.two_factor_enabled]
+            },
+            session_id=session.get('session_id'),
+            role_id_at_action_time=getattr(current_user, 'role_id', None),
+            request_id=request.headers.get('X-Request-ID')  # Optional: if you're tracking it
+        )
+
     return redirect(url_for('security'))
 
 
@@ -1199,6 +1297,13 @@ def verify_reset_otp(): #THIS IS OTP FOR RESET PASSWORD
             user.otp_expiry = None
             db.session.commit()
 
+            log_system_action(
+                user_id=user.id,
+                action_type="Password Reset",
+                description="User reset password via email OTP",
+                category="SECURITY"
+            )
+
             # clear any logged‐in session state
             session.pop('reset_user_id', None)
             session.pop('reset_otp_attempts', None)
@@ -1252,6 +1357,14 @@ def setup_totp_step3():
             current_user.preferred_2fa = 'totp'
             current_user.two_factor_enabled = False
             db.session.commit()
+
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Authenticator Setup",
+                description="User set up authenticator app (TOTP)",
+                category="SECURITY"
+            )
+
             return redirect(url_for('setup_totp_done'))
         else:
             error = "Invalid code. Try again."
@@ -1330,6 +1443,12 @@ def disable_totp():
     current_user.totp_secret = None
     current_user.preferred_2fa = 'email'
     db.session.commit()
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Authenticator Disabled",
+        description="User disabled TOTP 2FA",
+        category="SECURITY"
+    )
     flash("Authenticator App has been disabled.", "info")
     return redirect(url_for('security'))
 
@@ -1347,6 +1466,12 @@ def fallback_to_email_otp():
     user.otp_code = generate_password_hash(code)
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     db.session.commit()
+    log_system_action(
+        user_id=user.id,
+        action_type="2FA Fallback to Email",
+        description="User switched from TOTP to email OTP for login",
+        category="AUTH"
+    )
 
     msg = Message(
         subject="Backup Login Code",
@@ -1430,6 +1555,8 @@ def security():
 @app.route('/toggle_region_lock', methods=['POST'])
 @login_required
 def toggle_region_lock():
+    original_value = current_user.region_lock_enabled
+    current_user.region_lock_enabled = not original_value
     current_user.region_lock_enabled = not current_user.region_lock_enabled
 
     message = ""
@@ -1443,6 +1570,22 @@ def toggle_region_lock():
         message = "Region lock disabled."
 
     db.session.commit()
+
+    # ✅ Log the change with session_id and other metadata
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Region Lock Toggled",
+        description=message,
+        category="SECURITY",
+        affected_object_id=current_user.id,
+        changed_fields={
+            "region_lock_enabled": [original_value, current_user.region_lock_enabled]
+        },
+        session_id=session.get('session_id'),
+        role_id_at_action_time=getattr(current_user, 'role_id', None),
+        request_id=request.headers.get('X-Request-ID')  # Optional: for traceability
+    )
+
     flash(message, "info")
     return redirect(url_for('security'))
 
@@ -1703,8 +1846,31 @@ def change_username():
 
     if form.validate_on_submit():
         try:
+            # ✅ Snapshot original data
+            original_data = {
+                "username": current_user.username
+            }
+
+            # ✅ Apply change
             current_user.username = form.new_username.data.strip()
+
+            # ✅ Detect what changed
+            changed = detect_changes(current_user, original_data, ["username"])
+
             db.session.commit()
+
+            # ✅ Only log if a change actually occurred
+
+            if changed:
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="Username Change",
+                    description=f"User changed their username",
+                    category="PROFILE",
+                    affected_object_id=current_user.id,
+                    changed_fields=changed
+                )
+
             flash('Username changed successfully.', 'success')
             return redirect(url_for('profile'))
         except Exception:
@@ -1732,7 +1898,16 @@ def change_email():
         try:
             # normalize to lowercase to avoid dupes
             current_user.email = form.new_email.data.strip().lower()
+            old_email = current_user.email
             db.session.commit()
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Email Change",
+                description=f"Changed email from {old_email} to {current_user.email}",
+                category="PROFILE",
+                changed_fields={"email": [old_email, current_user.email]}
+            )
+
             flash('Email changed successfully.', 'success')
             return redirect(url_for('profile'))
         except Exception:
@@ -1762,6 +1937,19 @@ def delete_account():
             return redirect(url_for('delete_account'))
 
         try:
+            log_system_action(
+                user_id=user.id,
+                action_type="Account Deletion",
+                description="User deleted their account.",
+                category="SECURITY",
+                affected_object_id=user.id,
+                changed_fields={
+                    "account_status": ["active", "deleted"],
+                    "username": user.username,
+                    "email": user.email
+                }
+            )
+
             logout_user()
             db.session.delete(user)
             db.session.commit()
@@ -1805,6 +1993,14 @@ def force_password_reset():
                 user.password_history = user.password_history[-3:]
 
             db.session.commit()
+            log_system_action(
+                user_id=user.id,
+                action_type="Forced Password Reset",
+                description="User reset password after expiration.",
+                category="SECURITY",
+                changed_fields={"password": ["previous_hash", "new_hash_truncated"]}
+            )
+
             session.pop('expired_user_id', None)
             flash('Password updated successfully. Please log in.', 'success')
             return redirect(url_for('login'))
@@ -2008,33 +2204,86 @@ def admin_dashboard():
 @login_required
 @role_required(3)
 def admin_overview():
-    utc_now = datetime.utcnow()
-    day_ago = utc_now - timedelta(days=1)
 
-    total_users = User.query.count()
-    new_signups = User.query.filter(User.created_at >= day_ago).count()
-    successful_logins_24h = LoginAuditLog.query.filter(
-        LoginAuditLog.timestamp >= day_ago,
-        LoginAuditLog.success == True
-    ).count()
 
-    failed_logins_24h = LoginAuditLog.query.filter(
-        LoginAuditLog.timestamp >= day_ago,
-        LoginAuditLog.success == False
-    ).count()
+   utc_now = datetime.utcnow()
+   day_ago = utc_now - timedelta(days=1)
+   # Top 5 IPs with failed login attempts in the last 24 hours
+   top_failed_ips = db.session.query(
+       LoginAuditLog.ip_address,
+       func.count(LoginAuditLog.id)
+   ).filter(
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.success == False
+   ).group_by(LoginAuditLog.ip_address
+              ).order_by(func.count(LoginAuditLog.id).desc()
+                         ).limit(5).all()
+   total_users = User.query.count()
+   new_signups = User.query.filter(User.created_at >= day_ago).count()
+   successful_logins_24h = LoginAuditLog.query.filter(
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.success == True
+   ).count()
 
-    deactivated_accounts = User.query.filter_by(is_active=False).count()
-    active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
 
-    return render_template(
-        'admin_overview.html',
-        total_users=total_users,
-        new_signups=new_signups,
-        successful_logins_24h=successful_logins_24h,
-        failed_logins_24h=failed_logins_24h,
-        active_today=active_today,
-        deactivated_accounts=deactivated_accounts
-    )
+   failed_logins_24h = LoginAuditLog.query.filter(
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.success == False
+   ).count()
+
+
+   deactivated_accounts = User.query.filter_by(is_active=False).count()
+   active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
+   # Get actual active users in the last 24h
+   active_user_ids = db.session.query(LoginAuditLog.user_id).filter(
+       LoginAuditLog.success == True,
+       LoginAuditLog.timestamp >= day_ago,
+       LoginAuditLog.user_id != None
+   ).distinct().subquery()
+
+
+   active_users = db.session.query(User).filter(User.id.in_(active_user_ids)).all()
+
+
+   recent_users = User.query.filter(User.created_at >= day_ago).order_by(User.created_at.desc()).limit(10).all()
+
+
+   recent_failed_logins = LoginAuditLog.query.filter(
+       LoginAuditLog.success == False,
+       LoginAuditLog.timestamp >= day_ago
+   ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+
+
+   recent_successful_logins = LoginAuditLog.query.filter(
+       LoginAuditLog.success == True,
+       LoginAuditLog.timestamp >= day_ago
+   ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+   # Get all users (for Total Registered Users)
+   all_users = User.query.order_by(User.id.desc()).limit(100).all()
+
+
+   # Get deactivated accounts
+   deactivated_users = User.query.filter_by(is_active=False).order_by(User.id.desc()).limit(100).all()
+
+
+   return render_template(
+       'admin_overview.html',
+       total_users=total_users,
+       new_signups=new_signups,
+       successful_logins_24h=successful_logins_24h,
+       failed_logins_24h=failed_logins_24h,
+       active_today=active_today,
+       deactivated_accounts=deactivated_accounts,
+       top_failed_ips = top_failed_ips,
+       recent_users = recent_users,
+       recent_failed_logins = recent_failed_logins,
+       recent_successful_logins = recent_successful_logins,
+       active_users = active_users,
+       all_users=all_users,
+       deactivated_users=deactivated_users,
+
+
+   )
 
 @app.route('/admin/users')
 @login_required
@@ -2067,6 +2316,19 @@ def add_user():
         new_user = User(username=username, email=email, password=password, role_id=role_id)
         db.session.add(new_user)
         db.session.commit()
+        log_system_action(
+            user_id=current_user.id,
+            action_type="Admin Add User",
+            description=f"Created new user: {email}",
+            category="ADMIN",
+            affected_object_id=new_user.id,
+            changed_fields={
+                "username": [None, username],
+                "email": [None, email],
+                "role_id": [None, role_id]
+            }
+        )
+
         flash('New user added.', 'success')
         return redirect(url_for('manage_users'))
 
@@ -2079,13 +2341,40 @@ def edit_user(user_id):
     user = User.query.get_or_404(user_id)
 
     if request.method == 'POST':
-        user.username = request.form['username']
-        user.email = request.form['email']
+        # ✅ Snapshot original values before applying changes
+        original_data = {
+            "username": user.username,
+            "email": user.email,
+            "role_id": user.role_id
+        }
+
+        # ✅ Apply new values from form
+        user.username = request.form['username'].strip()
+        user.email = request.form['email'].strip()
         user.role_id = int(request.form['role_id'])
-        if request.form['password']:
-            user.password = generate_password_hash(request.form['password'])
-        db.session.commit()
-        flash('User updated.', 'success')
+
+        # ✅ Detect changes before committing
+        changed = detect_changes(user, original_data, ["username", "email", "role_id"])
+
+        try:
+            db.session.commit()
+
+            # ✅ Only log if something actually changed
+            if changed:
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="Admin Edit User",
+                    description=f"Edited user ID {user.id}",
+                    category="ADMIN",
+                    affected_object_id=user.id,
+                    changed_fields=changed
+                )
+
+            flash('User updated.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash("Failed to update user. Please try again.", "danger")
+
         return redirect(url_for('manage_users'))
 
     return render_template('admin_user_form.html', action='Edit', user=user)
@@ -2095,38 +2384,153 @@ def edit_user(user_id):
 @role_required(3)
 def toggle_user_activation(user_id):
     user = User.query.get_or_404(user_id)
+    original_status = user.is_active
     user.is_active = not user.is_active
     db.session.commit()
+
+    # ✅ Log the change
+    log_system_action(
+        user_id=current_user.id,
+        action_type="Admin Toggled User Activation",
+        description=f"{user.username} is now {'active' if user.is_active else 'deactivated'}",
+        category="ADMIN",
+        affected_object_id=user.id,
+        changed_fields={
+            "is_active": [original_status, user.is_active]
+        }
+    )
+
     flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
     return redirect(url_for('manage_users'))
 
-@app.route('/admin/security_dashboard')
-@login_required
+@app.route('/security_dashboard')
 @role_required(3)
 def security_dashboard():
-    logs_query = LoginAuditLog.query
+   # --- LOGIN AUDIT LOG FILTERS ---
+   login_query = LoginAuditLog.query
+   email = request.args.get('email')
+   login_user_id = request.args.get('login_user_id')
+   success = request.args.get('success')
+   location = request.args.get('location')
+   ip_address = request.args.get('ip')
+   user_agent = request.args.get('user_agent')
+   login_start_date = request.args.get('login_start_date')
+   login_end_date = request.args.get('login_end_date')
 
-    # Get filter values from request
-    email_filter = request.args.get('email')
-    location_filter = request.args.get('location')
-    success_filter = request.args.get('success')
 
-    if email_filter:
-        logs_query = logs_query.filter(LoginAuditLog.email == email_filter)
-    if location_filter:
-        logs_query = logs_query.filter(LoginAuditLog.location == location_filter)
-    if success_filter in ['0', '1']:
-        logs_query = logs_query.filter(LoginAuditLog.success == bool(int(success_filter)))
+   if email:
+       login_query = login_query.filter(LoginAuditLog.email == email)
 
-    logs = logs_query.order_by(LoginAuditLog.timestamp.desc()).limit(50).all()
-    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(50).all()
 
-    # ✨ Fetch unique filter values
-    emails = [e[0] for e in db.session.query(LoginAuditLog.email).distinct().all()]
-    locations = [l[0] for l in db.session.query(LoginAuditLog.location).distinct().all()]
+   if login_user_id and login_user_id.isdigit():
+       login_query = login_query.filter(LoginAuditLog.user_id == int(login_user_id))
 
-    return render_template('security_dashboard.html', logs=logs, devices=devices,
-                           emails=emails, locations=locations)
+
+   if success in ['0', '1']:
+       login_query = login_query.filter(LoginAuditLog.success == (success == '1'))
+
+
+   if location:
+       login_query = login_query.filter(LoginAuditLog.location == location)
+
+
+   if ip_address:
+       login_query = login_query.filter(LoginAuditLog.ip_address.like(f"%{ip_address}%"))
+
+
+   if user_agent:
+       login_query = login_query.filter(LoginAuditLog.user_agent.ilike(f"%{user_agent}%"))
+
+
+   if login_start_date:
+       try:
+           start_dt = datetime.strptime(login_start_date, "%Y-%m-%d")
+           login_query = login_query.filter(LoginAuditLog.timestamp >= start_dt)
+       except ValueError as e:
+           print("Start date parsing error:", e)
+
+
+   if login_end_date:
+       try:
+           end_dt = datetime.strptime(login_end_date, "%Y-%m-%d") + timedelta(days=1)
+           login_query = login_query.filter(LoginAuditLog.timestamp < end_dt)
+       except ValueError as e:
+           print("End date parsing error:", e)
+
+
+   login_logs = login_query.order_by(LoginAuditLog.timestamp.desc()).limit(100).all()
+
+
+   # --- SYSTEM AUDIT LOG FILTERS ---
+   audit_query = SystemAuditLog.query
+
+
+   user_id = request.args.get('user_id')
+   action_type = request.args.get('action_type')
+   category = request.args.get('category')
+   log_level = request.args.get('log_level')
+   audit_start_date = request.args.get('audit_start_date')
+   audit_end_date = request.args.get('audit_end_date')
+
+
+   if user_id and user_id.isdigit():
+       audit_query = audit_query.filter(SystemAuditLog.user_id == int(user_id))
+
+
+   if action_type:
+       audit_query = audit_query.filter_by(action_type=action_type)
+
+
+   if category:
+       audit_query = audit_query.filter_by(category=category)
+
+
+   if log_level:
+       audit_query = audit_query.filter_by(log_level=log_level)
+
+
+   if audit_start_date:
+       try:
+           audit_start_dt = datetime.strptime(audit_start_date, "%Y-%m-%d")
+           audit_query = audit_query.filter(SystemAuditLog.timestamp >= audit_start_dt)
+       except ValueError as e:
+           print("Audit start date error:", e)
+
+
+   if audit_end_date:
+       try:
+           audit_end_dt = datetime.strptime(audit_end_date, "%Y-%m-%d") + timedelta(days=1)
+           audit_query = audit_query.filter(SystemAuditLog.timestamp < audit_end_dt)
+       except ValueError as e:
+           print("Audit end date error:", e)
+
+
+   audit_logs = audit_query.order_by(SystemAuditLog.timestamp.desc()).limit(200).all()
+
+
+   # --- DROPDOWNS ---
+   user_ids = [user.id for user in db.session.query(User.id).distinct().order_by(User.id).all()]
+   emails = [row.email for row in db.session.query(LoginAuditLog.email).distinct() if row.email]
+   locations = [row.location for row in db.session.query(LoginAuditLog.location).distinct() if row.location]
+   action_types = [row.action_type for row in db.session.query(SystemAuditLog.action_type).distinct() if row.action_type]
+   categories = [row.category for row in db.session.query(SystemAuditLog.category).distinct() if row.category]
+
+
+   # --- KNOWN DEVICES ---
+   devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(100).all()
+
+
+   return render_template(
+       'security_dashboard.html',
+       logs=login_logs,
+       emails=emails,
+       locations=locations,
+       devices=devices,
+       audit_logs=audit_logs,
+       action_types=action_types,
+       categories=categories,
+       user_ids=user_ids,
+   )
 
 @app.route('/contact')
 def contact():
