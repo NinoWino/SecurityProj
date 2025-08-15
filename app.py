@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from flask_mail import Mail, Message
 from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
-import os, requests, pyotp, qrcode, io, secrets, json ,uuid,random
+import os, requests, pyotp, qrcode, io, secrets, json ,uuid,random,re
 from dotenv import load_dotenv
 from user_agents import parse as parse_ua
 from pytz import timezone
@@ -34,6 +34,7 @@ from PyPDF2 import PdfReader, PdfWriter
 from flask import make_response
 from io import BytesIO
 from collections import Counter
+from urllib.parse import quote_plus
 
 
 
@@ -257,22 +258,6 @@ def send_otp_email(user, subject, body_template):
     mail.send(msg)
     return code
 
-def enforce_rate_limit(limit_string, key_prefix, error_message="Too many requests. Please try again later.", wait_seconds=60):
-    """
-    Globally usable rate limiter.
-    - `limit_string`: e.g., "3 per minute"
-    - `key_prefix`: unique string (e.g., "login:email@example.com")
-    - `error_message`: message to show user on limit breach
-    - `wait_seconds`: value to return for UI countdown (optional)
-
-    Returns (None, None) if allowed, else (error_message, wait_seconds)
-    """
-    try:
-        limiter.limit(limit_string, key_func=lambda: key_prefix)(lambda: None)()
-        return None, None
-    except RateLimitExceeded:
-        return error_message, wait_seconds
-
 def is_user_blocked_by_time(user):
     now = datetime.now().time()
     start = user.login_block_start
@@ -286,6 +271,13 @@ def is_user_blocked_by_time(user):
     else:
         # Handles overnight span (e.g., 11 PM to 6 AM)
         return now >= start or now <= end
+
+
+@app.errorhandler(RateLimitExceeded)
+def handle_rate_limit(e):
+    referer = request.referrer or url_for('login')  # fallback if no referrer
+    flash("Too many requests. Please wait and try again.", "warning")
+    return redirect(referer)
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -389,8 +381,165 @@ def log_system_action(
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #ALL OF RENFRED FUNCTIONS PUT HERE
+def _risk_level(score: int) -> str:
+    # Tweak ranges anytime; they’re also shown on the page
+    if score >= 85:
+        return "Critical"
+    if score >= 70:
+        return "High"
+    if score >= 40:
+        return "Moderate"
+    if score >= 1:
+        return "Low"
+    return "Very Low"
+
+def _reason_from_ipqs(data: dict) -> str:
+    """
+    Build a readable reason string from IPQS JSON flags.
+    """
+    flags = []
+    if data.get("vpn") or data.get("active_vpn"):
+        flags.append("VPN detected")
+    if data.get("proxy") or data.get("active_proxy") or data.get("open_proxy"):
+        flags.append("Proxy detected")
+    if data.get("tor") or data.get("active_tor"):
+        flags.append("Tor exit node")
+    if data.get("recent_abuse"):
+        flags.append("Recent abuse reports")
+    if data.get("bot_status"):
+        flags.append("Automated/bot-like behavior")
+    # Hosting / data center style connections
+    ct = (data.get("connection_type") or "").lower()
+    if "hosting" in ct or data.get("datacenter") or data.get("is_datacenter"):
+        flags.append("Data center/hosting network")
+
+    return ", ".join(flags) if flags else "No risk indicators reported"
+
+def check_fraud_risk(email=None, ip=None, user_agent=None, phone=None):
+    """
+    Returns a dict like:
+      { 'score': int, 'risky': bool, 'level': str, 'reason': str, 'raw': {...} }
+    Provider: IPQS (header auth).
+    """
+    provider = (os.getenv('FRAUD_API_PROVIDER') or '').lower()
+    api_key  = os.getenv('FRAUD_API_KEY')
+    if not provider or not api_key or not ip:
+        return {'score': 0, 'risky': False, 'level': _risk_level(0),
+                'reason': 'Fraud check disabled or missing IP', 'raw': {}}
+
+    try:
+        if provider == 'ipqs':
+            url = "https://ipqualityscore.com/api/json/ip"
+            params = {
+                "ip": ip,
+                "strictness": 1,
+                "fast": "true",
+                "allow_public_access_points": "true",
+                "mobile": "true",
+                "user_agent": quote_plus(user_agent or ''),
+            }
+            headers = {"IPQS-KEY": api_key}
+            r = requests.get(url, params=params, headers=headers, timeout=4)
+            data = r.json()
+            score = int(data.get('fraud_score', 0))
+            risky_flags = any(data.get(k) for k in ('vpn', 'proxy', 'tor', 'bot_status', 'recent_abuse'))
+            return {
+                'score': score,
+                'risky': risky_flags,
+                'level': _risk_level(score),
+                'reason': _reason_from_ipqs(data),
+                'raw': data
+            }
+
+        return {'score': 0, 'risky': False, 'level': _risk_level(0),
+                'reason': 'Unknown provider', 'raw': {}}
+
+    except Exception as e:
+        return {'score': 0, 'risky': False, 'level': _risk_level(0),
+                'reason': f'Provider error: {e}', 'raw': {}}
 
 
+def log_fraud_event(user_id, where, risk, ip=None, user_agent=None, extra=None):
+    """
+    where: 'login' | 'google' | 'register' | 'manual'
+    Writes a JSON summary to SystemAuditLog.description (visible to admin).
+    NOTE: we intentionally do NOT include the provider here.
+    """
+    try:
+        payload = {
+            "fraud_score": risk.get("score"),
+            "risky": bool(risk.get("risky")),
+            "level": risk.get("level"),
+            "reasons": risk.get("reason"),
+            "ip": ip,
+            "ua": (user_agent or "")[:200],
+            "ts": datetime.utcnow().isoformat() + "Z",
+        }
+        if extra:
+            payload["extra"] = extra
+
+        entry = SystemAuditLog(
+            user_id=user_id,
+            action_type=f"fraud_check_{where}",
+            description=json.dumps(payload)
+        )
+        db.session.add(entry)
+        db.session.commit()
+    except Exception as e:
+        print("log_fraud_event failed:", e)
+
+@app.route('/admin/fraud')
+@login_required
+@role_required(3)  # keep your guards if you had them
+def admin_fraud():
+    logs = SystemAuditLog.query\
+        .filter(SystemAuditLog.action_type.like('fraud_check_%'))\
+        .order_by(SystemAuditLog.id.desc())\
+        .limit(200).all()
+
+    # ---- Bulk fetch user emails for rows that have a user_id
+    user_ids = {row.user_id for row in logs if row.user_id is not None}
+    id_to_email = {}
+    if user_ids:
+        users = User.query.filter(User.id.in_(user_ids)).all()
+        id_to_email = {u.id: (u.email or "") for u in users}
+
+    rows = []
+    for row in logs:
+        try:
+            d = json.loads(row.description or "{}")
+        except Exception:
+            d = {}
+
+        score = int(d.get("fraud_score") or 0)
+        level = d.get("level") or _risk_level(score)
+        reasons = d.get("reasons") or d.get("reason") or "—"
+        where = (row.action_type or "").replace("fraud_check_", "")
+
+        # Prefer DB email when user_id exists; otherwise use payload's email (register flow)
+        email = id_to_email.get(row.user_id) or d.get("email") or "—"
+
+        rows.append({
+            "id": row.id,
+            "when": getattr(row, "created_at", None) or getattr(row, "timestamp", None),
+            "user_id": row.user_id,
+            "email": email,
+            "where": where,
+            "score": score,
+            "level": level,
+            "risky": d.get("risky"),
+            "ip": d.get("ip"),
+            "reasons": reasons,
+        })
+
+    risk_legend = [
+        {"label": "Very Low", "range": "0"},
+        {"label": "Low",      "range": "1–39"},
+        {"label": "Moderate", "range": "40–69"},
+        {"label": "High",     "range": "70–84"},
+        {"label": "Critical", "range": "85–100"},
+    ]
+    return render_template('admin_fraud.html', rows=rows, risk_legend=risk_legend)
 
 
 
@@ -544,6 +693,39 @@ def login():
                             'Your IP is not authorized. <a href="#" data-bs-toggle="modal" data-bs-target="#backupCodeModal">Use Backup Code</a> to override.'
                         ), "danger")
                         return redirect(url_for('login'))
+
+                # ---- Risk-based fraud check (IPQS) ----
+                threshold = int(os.getenv('FRAUD_THRESHOLD', '75'))
+                action = (os.getenv('FRAUD_FAIL_ACTION', 'step_up') or 'step_up').lower()
+
+                risk = check_fraud_risk(email=user.email, ip=ip, user_agent=user_agent)
+                log_fraud_event(user_id=user.id, where='login', risk=risk, ip=ip, user_agent=user_agent)
+
+                if risk.get('score', 0) >= threshold or risk.get('risky'):
+                    if action == 'block':
+                        flash("Your sign-in looks risky and was blocked. Please contact support.", "danger")
+                        return redirect(url_for('login'))
+
+                    # Step-up to Email OTP
+                    session['pre_2fa_user_id'] = user.id
+                    session['login_otp_attempts'] = 0
+                    code = f"{random.randint(0, 999999):06d}"
+                    user.otp_code = generate_password_hash(code)
+                    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                    db.session.commit()
+
+                    try:
+                        mail.send(Message(
+                            subject="Extra Verification Required",
+                            recipients=[user.email],
+                            body=f"Hi {user.username},\n\nWe detected a risky sign-in. Your verification code is: {code}\nIt expires in 5 minutes."
+                        ))
+                    except Exception:
+                        flash("Failed to send OTP. Try again later.", "danger")
+                        return redirect(url_for('login'))
+
+                    flash("We detected a risky sign-in. Please complete the one-time code we emailed you.", "warning")
+                    return redirect(url_for('two_factor'))
 
                 # → TOTP 2FA
                 if user.preferred_2fa == 'totp' and user.totp_secret:
@@ -723,6 +905,37 @@ def auth_callback():
             ), "danger")
             return redirect(url_for('login'))
 
+    # ---- Risk-based fraud check (Google sign-in) ----
+    threshold = int(os.getenv('FRAUD_THRESHOLD', '75'))
+    action = (os.getenv('FRAUD_FAIL_ACTION', 'step_up') or 'step_up').lower()
+
+    ip, _, _ = get_ip_and_location()
+    user_agent = request.headers.get('User-Agent')
+
+    risk = check_fraud_risk(email=user.email, ip=ip, user_agent=user_agent)
+    log_fraud_event(user_id=user.id, where='google', risk=risk, ip=ip, user_agent=user_agent)
+
+    if risk.get('score', 0) >= threshold or risk.get('risky'):
+        if action == 'block':
+            flash("Your sign-in looks risky and was blocked. Please contact support.", "danger")
+            return redirect(url_for('login'))
+
+        # Step-up to Email OTP
+        session['pre_2fa_user_id'] = user.id
+        session['login_otp_attempts'] = 0
+        code = f"{random.randint(0, 999999):06d}"
+        user.otp_code = generate_password_hash(code)
+        user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+        db.session.commit()
+
+        mail.send(Message(
+            subject="Extra Verification Required",
+            recipients=[user.email],
+            body=f"Hi {user.username},\n\nWe detected a risky sign-in. Your verification code is: {code}\nIt expires in 5 minutes."
+        ))
+        flash("We detected a risky sign-in. Please complete the one-time code we emailed you.", "warning")
+        return redirect(url_for('two_factor'))
+
     # ── TOTP 2FA ───────────────────────────────────────────────
     if user.preferred_2fa == 'totp' and user.totp_secret:
         session['pre_2fa_user_id'] = user.id
@@ -815,7 +1028,9 @@ def change_password():
             return redirect(url_for('login', message='pw_changed'))
 
     return render_template('change_password.html', form=form, error=error)
+
 @app.route('/forgot_password', methods=['GET', 'POST'])
+@limiter.limit("3 per minute", key_func=get_remote_address)
 def forgot_password():
     if current_user.is_authenticated:
         return redirect(url_for('profile'))
@@ -824,29 +1039,15 @@ def forgot_password():
     error = None
 
     if form.validate_on_submit():
-        # rate‐limit to 3/min by IP
-        error, wait = enforce_rate_limit(
-            "3 per minute",
-            key_prefix=f"forgot:{request.remote_addr}",
-            error_message="Too many OTP requests. Please wait before trying again.",
-            wait_seconds=60
-        )
-        if error:
-            session['reset_wait_until'] = (datetime.utcnow() + timedelta(seconds=wait)).isoformat()
-            return render_template('forgot_password.html', form=form,
-                                   error=error, wait_seconds=wait)
-
         email = form.email.data.strip().lower()
         stmt = select(User).filter_by(email=email)
         user = db.session.scalars(stmt).first()
 
         if user:
-            # ❌ Block Google users from using forgot password
             if (user.signup_method or 'email').lower() == 'google':
                 error = "This email was registered using Google. Please use Google Login instead."
                 return render_template('forgot_password.html', form=form, error=error)
 
-            # ✅ Proceed with OTP generation
             code = f"{random.randint(0, 999999):06d}"
             user.otp_code   = generate_password_hash(code)
             user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
@@ -869,7 +1070,6 @@ def forgot_password():
 
             return redirect(url_for('verify_reset_otp'))
 
-        # ❌ No matching user
         error = "Email not found."
 
     return render_template('forgot_password.html', form=form, error=error)
@@ -1000,9 +1200,8 @@ def two_factor():
     return render_template('two_factor.html', form=form, error=error,
                            backup_code_error=backup_code_error, resent=resent)
 
-
-
 @app.route('/resend_otp/<context>')
+@limiter.limit("3 per minute", key_func=lambda: f"resend-otp:{session.get('register_email') or session.get('pre_2fa_user_id') or session.get('reset_user_id') or get_remote_address()}")
 def resend_otp(context):
     now = datetime.utcnow()
 
@@ -1013,16 +1212,6 @@ def resend_otp(context):
             return redirect(url_for('login'))
 
         user = db.session.get(User, user_id)
-
-        error, wait = enforce_rate_limit(
-            "3 per minute",
-            key_prefix=f"resend-login:{user.email}",
-            error_message="Too many OTP resends. Please wait before trying again.",
-            wait_seconds=60
-        )
-        if error:
-            session['login_wait_until'] = (now + timedelta(seconds=wait)).isoformat()
-            return render_template('two_factor.html', form=OTPForm(), error=error, wait_seconds=wait)
 
         try:
             send_otp_email(
@@ -1040,16 +1229,6 @@ def resend_otp(context):
         email = session.get('register_email')
         if not email:
             return render_template('register_email.html', form=EmailForm(), error="Session expired. Please start again.")
-
-        error, wait = enforce_rate_limit(
-            "3 per minute",
-            key_prefix=f"resend-register:{email}",
-            error_message="Too many OTP resends. Please wait before trying again.",
-            wait_seconds=60
-        )
-        if error:
-            session['register_wait_until'] = (now + timedelta(seconds=wait)).isoformat()
-            return render_template('register_details.html', form=RegisterDetailsForm(), email=email, error=error, wait_seconds=wait)
 
         class TempUser: pass
         temp = TempUser()
@@ -1074,16 +1253,6 @@ def resend_otp(context):
             return redirect(url_for('forgot_password'))
 
         user = db.session.get(User, user_id)
-
-        error, wait = enforce_rate_limit(
-            "3 per minute",
-            key_prefix=f"resend-reset:{user.email}",
-            error_message="Too many OTP resends. Please wait before trying again.",
-            wait_seconds=60
-        )
-        if error:
-            session['reset_wait_until'] = (now + timedelta(seconds=wait)).isoformat()
-            return render_template('reset_password.html', form=ResetPasswordForm(), error=error, wait_seconds=wait)
 
         try:
             send_otp_email(
@@ -1569,6 +1738,24 @@ def register_email():
             if similar_count >= 3:
                 flash('Too many similar usernames have registered using this email pattern. Try a different email', 'danger')
                 return redirect(url_for('register_email'))
+
+        # ---- Fraud check before sending registration OTP ----
+        ip, _, _ = get_ip_and_location()
+        user_agent = request.headers.get('User-Agent')
+        threshold = int(os.getenv('FRAUD_THRESHOLD', '75'))
+        action = (os.getenv('FRAUD_FAIL_ACTION', 'step_up') or 'step_up').lower()
+
+        risk = check_fraud_risk(email=email, ip=ip, user_agent=user_agent)
+
+        # (Optional dev visibility)
+        if app.debug:
+            flash(f"[DEV] Registration fraud score={risk.get('score')} risky={risk.get('risky')}", "info")
+
+        if risk.get('score', 0) >= threshold or risk.get('risky'):
+            if action == 'block':
+                flash("We couldn't proceed with this registration from your network. Please try again later.", "danger")
+                return redirect(url_for('register_email'))
+            # action == step_up → just continue to generate/send the OTP as usual
 
         # Generate OTP
         otp = f"{random.randint(0, 999999):06d}"
