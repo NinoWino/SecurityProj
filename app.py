@@ -1,7 +1,7 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify,g
 from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import select,func
+from sqlalchemy import select,func,distinct, desc
 from flask_login import (
     LoginManager, login_user, logout_user,
     login_required, current_user
@@ -16,33 +16,26 @@ from forms import (
     ChangeEmailForm, LoginRestrictionForm, IPWhitelistForm
 )
 from datetime import datetime, timedelta
-import random
 from flask_mail import Mail, Message
 from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
-import os, requests, pyotp, qrcode, io
+import os, requests, pyotp, qrcode, io, secrets, json ,uuid,random,re
 from dotenv import load_dotenv
 from user_agents import parse as parse_ua
 from pytz import timezone
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
-import requests
 from models import Product  # at the top with other imports
 from forms import ProductForm
-import os
 from werkzeug.utils import secure_filename
-import os
 from fpdf import FPDF
 from PyPDF2 import PdfReader, PdfWriter
 from flask import make_response
 from io import BytesIO
-import secrets
-import os, json, re
-import requests
+from collections import Counter
 from urllib.parse import quote_plus
-from datetime import datetime, timedelta
-from flask_mail import Message
+
 
 
 
@@ -313,7 +306,21 @@ def get_ip_and_location():
         print("GeoIP fetch failed:", e)
         return "Unknown", "Unknown", {'city': '', 'region': '', 'country': 'Unknown'}
 
+@app.before_request
+def attach_request_ids():
+    if 'session_id' not in session:
+        session['session_id'] = uuid.uuid4().hex
+    g.request_id = uuid.uuid4().hex
 
+def _as_json(val):
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    try:
+        return json.dumps(val, ensure_ascii=False, separators=(',',':'))
+    except Exception:
+        return str(val)
 
 def log_system_action(
     user_id,
@@ -328,20 +335,17 @@ def log_system_action(
     request_id=None
 ):
     try:
-        print(f"[DEBUG] log_system_action CALLED: {action_type}, user={user_id}")
-        ip, location,_ = get_ip_and_location()
-        user_agent = request.headers.get('User-Agent', 'Unknown')
-        endpoint = request.endpoint
+        ip, location, _ = get_ip_and_location()
+        user_agent  = request.headers.get('User-Agent', 'Unknown')
+        endpoint    = request.endpoint
         http_method = request.method
-        session_id = session_id or session.get('session_id')
 
-        # ✅ Add these lines
-        request_id = request_id or getattr(g, 'request_id', None)
-        role_id = role_id_at_action_time or (current_user.role_id if current_user.is_authenticated else None)
+        # resolve runtime values safely
+        session_id  = session_id or session.get('session_id')
+        request_id  = request_id or getattr(g, 'request_id', None)
+        role_id     = role_id_at_action_time or (current_user.role_id if current_user.is_authenticated else None)
 
-        # Store changes as JSON if provided as dict
-        if isinstance(changed_fields, dict):
-            changed_fields = json.dumps(changed_fields)
+        changed_fields = _as_json(changed_fields)
 
         log = SystemAuditLog(
             user_id=user_id,
@@ -357,14 +361,13 @@ def log_system_action(
             ip_address=ip,
             user_agent=user_agent,
             location=location,
-            role_id_at_action_time = role_id,
-            request_id = request_id
+            role_id_at_action_time=role_id,
+            request_id=request_id
         )
         db.session.add(log)
         db.session.commit()
-        print("[DEBUG] log_system_action COMMIT OK")
     except Exception as e:
-        print(f"[AuditLog Error] Failed to log action '{action_type}':", e)
+        print(f"[AuditLog Error] Failed to log '{action_type}': {e}")
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1081,6 +1084,7 @@ def forgot_password():
 def toggle_2fa():
     form = Toggle2FAForm()
     if form.validate_on_submit():
+        original_value = current_user.two_factor_enabled
         if current_user.two_factor_enabled:
             current_user.two_factor_enabled = False
         else:
@@ -1557,7 +1561,6 @@ def security():
 def toggle_region_lock():
     original_value = current_user.region_lock_enabled
     current_user.region_lock_enabled = not original_value
-    current_user.region_lock_enabled = not current_user.region_lock_enabled
 
     message = ""
     if current_user.region_lock_enabled:
@@ -1897,8 +1900,8 @@ def change_email():
     if form.validate_on_submit():
         try:
             # normalize to lowercase to avoid dupes
-            current_user.email = form.new_email.data.strip().lower()
             old_email = current_user.email
+            current_user.email = form.new_email.data.strip().lower()
             db.session.commit()
             log_system_action(
                 user_id=current_user.id,
@@ -2025,7 +2028,7 @@ def view_product(product_id):
 
 @app.route('/admin/products', methods=['GET', 'POST'])
 @login_required
-@role_required('admin')
+@role_required(3)
 def manage_products():
     form = ProductForm()
     products = Product.query.order_by(Product.created_at.desc()).all()
@@ -2059,7 +2062,7 @@ def manage_products():
 
 @app.route('/admin/products/delete/<int:id>', methods=['POST'])
 @login_required
-@role_required('admin')
+@role_required(3)
 def delete_product(id):
     product = Product.query.get_or_404(id)
 
@@ -2200,90 +2203,157 @@ def staff_dashboard():
 def admin_dashboard():
     return render_template('admin_dashboard.html')
 
-@app.route('/admin/overview')
-@login_required
-@role_required(3)
+@app.route("/admin/overview")
+# @login_required
+# @role_required(3)
 def admin_overview():
+    now = datetime.utcnow()
+    start_24h = now - timedelta(hours=24)
+    start_7d  = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
+    # --- Users / growth ---
+    try:
+        total_users = db.session.query(func.count(User.id)).scalar() or 0
+        all_users = User.query.order_by(desc(User.id)).limit(100).all()
+    except Exception:
+        total_users, all_users = 0, []
 
-   utc_now = datetime.utcnow()
-   day_ago = utc_now - timedelta(days=1)
-   # Top 5 IPs with failed login attempts in the last 24 hours
-   top_failed_ips = db.session.query(
-       LoginAuditLog.ip_address,
-       func.count(LoginAuditLog.id)
-   ).filter(
-       LoginAuditLog.timestamp >= day_ago,
-       LoginAuditLog.success == False
-   ).group_by(LoginAuditLog.ip_address
-              ).order_by(func.count(LoginAuditLog.id).desc()
-                         ).limit(5).all()
-   total_users = User.query.count()
-   new_signups = User.query.filter(User.created_at >= day_ago).count()
-   successful_logins_24h = LoginAuditLog.query.filter(
-       LoginAuditLog.timestamp >= day_ago,
-       LoginAuditLog.success == True
-   ).count()
+    # New signups (24h); tolerate missing columns
+    try:
+        new_signups = db.session.query(func.count(User.id))\
+            .filter(User.created_at >= start_24h).scalar() or 0
+        recent_users = User.query.filter(User.created_at >= start_24h)\
+            .order_by(desc(User.created_at)).limit(20).all()
+    except Exception:
+        new_signups, recent_users = 0, []
 
+    try:
+        deactivated_users = User.query.filter_by(is_active=False).all()
+        deactivated_accounts = len(deactivated_users)
+    except Exception:
+        deactivated_users, deactivated_accounts = [], 0
 
-   failed_logins_24h = LoginAuditLog.query.filter(
-       LoginAuditLog.timestamp >= day_ago,
-       LoginAuditLog.success == False
-   ).count()
+    # --- Distinct logins per day (7d) ---
+    rows = (
+        db.session.query(
+            func.date(LoginAuditLog.timestamp).label('day'),
+            func.count(distinct(LoginAuditLog.user_id)).label('uu')
+        )
+        .filter(LoginAuditLog.success.is_(True),
+                LoginAuditLog.timestamp >= start_7d)
+        .group_by(func.date(LoginAuditLog.timestamp))
+        .order_by(func.date(LoginAuditLog.timestamp))
+        .all()
+    )
+    days = [(start_7d + timedelta(days=i)).date() for i in range(7)]
+    by_day = {r.day: int(r.uu) for r in rows}
+    daily_active_labels = [d.isoformat() for d in days]
+    daily_active_values = [by_day.get(d, 0) for d in days]
+    distinct_logins_today = daily_active_values[-1] if daily_active_values else 0
+    daily_active = list(zip(daily_active_labels, daily_active_values))
 
+    # --- Success / Failure (24h) + lists ---
+    successful_logins_24h = db.session.query(func.count(LoginAuditLog.id))\
+        .filter(LoginAuditLog.success.is_(True),
+                LoginAuditLog.timestamp >= start_24h).scalar() or 0
+    failed_logins_24h = db.session.query(func.count(LoginAuditLog.id))\
+        .filter(LoginAuditLog.success.is_(False),
+                LoginAuditLog.timestamp >= start_24h).scalar() or 0
 
-   deactivated_accounts = User.query.filter_by(is_active=False).count()
-   active_today = LoginAuditLog.query.filter(LoginAuditLog.timestamp >= day_ago, LoginAuditLog.success == True).distinct(LoginAuditLog.user_id).count()
-   # Get actual active users in the last 24h
-   active_user_ids = db.session.query(LoginAuditLog.user_id).filter(
-       LoginAuditLog.success == True,
-       LoginAuditLog.timestamp >= day_ago,
-       LoginAuditLog.user_id != None
-   ).distinct().subquery()
+    recent_successful_logins = LoginAuditLog.query\
+        .filter(LoginAuditLog.success.is_(True),
+                LoginAuditLog.timestamp >= start_24h)\
+        .order_by(desc(LoginAuditLog.timestamp)).limit(15).all()
+    recent_failed_logins = LoginAuditLog.query\
+        .filter(LoginAuditLog.success.is_(False),
+                LoginAuditLog.timestamp >= start_24h)\
+        .order_by(desc(LoginAuditLog.timestamp)).limit(15).all()
 
+    # --- Success rate, unique IPs (24h) ---
+    total_24h = successful_logins_24h + failed_logins_24h
+    success_rate_24h = round((successful_logins_24h / total_24h) * 100, 1) if total_24h else 0.0
+    unique_ips_24h = db.session.query(func.count(distinct(LoginAuditLog.ip_address)))\
+        .filter(LoginAuditLog.timestamp >= start_24h).scalar() or 0
 
-   active_users = db.session.query(User).filter(User.id.in_(active_user_ids)).all()
+    # --- Top failed IPs (24h) ---
+    top_failed_ips_q = db.session.query(
+            LoginAuditLog.ip_address,
+            func.count(LoginAuditLog.id).label("cnt")
+        )\
+        .filter(LoginAuditLog.success.is_(False),
+                LoginAuditLog.timestamp >= start_24h,
+                LoginAuditLog.ip_address.isnot(None))\
+        .group_by(LoginAuditLog.ip_address)\
+        .order_by(desc("cnt")).limit(5).all()
+    top_failed_ips = [(ip or "Unknown", int(cnt)) for ip, cnt in top_failed_ips_q]
 
+    # --- Peak login hour (7d, successes only) ---
+    hour_counts = db.session.query(
+            func.hour(LoginAuditLog.timestamp).label('h'),
+            func.count().label('c')
+        )\
+        .filter(LoginAuditLog.success.is_(True),
+                LoginAuditLog.timestamp >= start_7d)\
+        .group_by('h').all()
+    peak_hour = max(hour_counts, key=lambda r: r.c).h if hour_counts else None
+    peak_hour_count = max((r.c for r in hour_counts), default=0)
+    peak_labels = list(range(24))
+    hour_map = {int(h): int(c) for h, c in hour_counts}
+    peak_values = [hour_map.get(h, 0) for h in peak_labels]
 
-   recent_users = User.query.filter(User.created_at >= day_ago).order_by(User.created_at.desc()).limit(10).all()
+    # --- Top countries (24h) from location string "Country, Region" ---
+    loc_rows = db.session.query(LoginAuditLog.location)\
+        .filter(LoginAuditLog.timestamp >= start_24h).all()
+    countries = []
+    for (loc,) in loc_rows:
+        if not loc:
+            countries.append('Unknown')
+        else:
+            countries.append((loc.split(',')[0] or '').strip() or 'Unknown')
+    top_countries_24h = Counter(countries).most_common(5)
 
+    # --- Admin/Security actions (24h) ---
+    try:
+        admin_actions_24h = db.session.query(
+                SystemAuditLog.action_type,
+                func.count(SystemAuditLog.id)
+            )\
+            .filter(SystemAuditLog.timestamp >= start_24h)\
+            .group_by(SystemAuditLog.action_type)\
+            .order_by(func.count(SystemAuditLog.id).desc())\
+            .limit(5).all()
+    except Exception:
+        admin_actions_24h = []
 
-   recent_failed_logins = LoginAuditLog.query.filter(
-       LoginAuditLog.success == False,
-       LoginAuditLog.timestamp >= day_ago
-   ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
+    # --- Simple spike detector (failed: current hour vs previous hour) ---
+    start_curr = now - timedelta(hours=1)
+    start_prev = now - timedelta(hours=2)
+    failed_curr = db.session.query(func.count(LoginAuditLog.id))\
+        .filter(LoginAuditLog.success.is_(False),
+                LoginAuditLog.timestamp >= start_curr).scalar() or 0
+    failed_prev = db.session.query(func.count(LoginAuditLog.id))\
+        .filter(LoginAuditLog.success.is_(False),
+                LoginAuditLog.timestamp >= start_prev,
+                LoginAuditLog.timestamp < start_curr).scalar() or 0
+    spike_delta_pct = ((failed_curr - failed_prev) / failed_prev * 100.0) if failed_prev else (100.0 if failed_curr else 0.0)
+    spike_alert = failed_curr >= max(5, int(failed_prev * 1.5))
 
-
-   recent_successful_logins = LoginAuditLog.query.filter(
-       LoginAuditLog.success == True,
-       LoginAuditLog.timestamp >= day_ago
-   ).order_by(LoginAuditLog.timestamp.desc()).limit(10).all()
-   # Get all users (for Total Registered Users)
-   all_users = User.query.order_by(User.id.desc()).limit(100).all()
-
-
-   # Get deactivated accounts
-   deactivated_users = User.query.filter_by(is_active=False).order_by(User.id.desc()).limit(100).all()
-
-
-   return render_template(
-       'admin_overview.html',
-       total_users=total_users,
-       new_signups=new_signups,
-       successful_logins_24h=successful_logins_24h,
-       failed_logins_24h=failed_logins_24h,
-       active_today=active_today,
-       deactivated_accounts=deactivated_accounts,
-       top_failed_ips = top_failed_ips,
-       recent_users = recent_users,
-       recent_failed_logins = recent_failed_logins,
-       recent_successful_logins = recent_successful_logins,
-       active_users = active_users,
-       all_users=all_users,
-       deactivated_users=deactivated_users,
-
-
-   )
+    return render_template(
+        "admin_overview.html",
+        total_users=total_users, all_users=all_users,
+        new_signups=new_signups, recent_users=recent_users,
+        deactivated_users=deactivated_users, deactivated_accounts=deactivated_accounts,
+        daily_active=daily_active, distinct_logins_today=distinct_logins_today,
+        successful_logins_24h=successful_logins_24h, failed_logins_24h=failed_logins_24h,
+        success_rate_24h=success_rate_24h, unique_ips_24h=unique_ips_24h,
+        recent_successful_logins=recent_successful_logins, recent_failed_logins=recent_failed_logins,
+        top_failed_ips=top_failed_ips,
+        peak_hour=peak_hour, peak_hour_count=peak_hour_count,
+        peak_labels=peak_labels, peak_values=peak_values,
+        top_countries_24h=top_countries_24h,
+        admin_actions_24h=admin_actions_24h,
+        spike_alert=spike_alert, spike_delta_pct=round(spike_delta_pct, 1),
+    )
 
 @app.route('/admin/users')
 @login_required

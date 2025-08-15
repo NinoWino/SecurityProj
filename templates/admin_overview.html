@@ -1,34 +1,200 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin Overview</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    .card {
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      cursor: pointer;
-    }
+    :root { --soft-shadow: 0 2px 6px rgba(0,0,0,.08); }
+    body { background: #f7f8fa; }
+    .card { box-shadow: var(--soft-shadow); border: none; }
+    .card .card-title { display: flex; align-items: center; gap: .35rem; }
+    .list-group-item { border: 1px solid rgba(0,0,0,.05); }
+    .badge { vertical-align: middle; }
+    .metric { font-weight: 700; letter-spacing: .3px; }
+    .metric-link { color: inherit; text-decoration: underline; }
+    .metric-link:hover { opacity: .9; }
   </style>
 </head>
 <body>
-<div class="container mt-5">
-  <h1>Admin Dashboard Overview</h1>
-  <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary mb-4">Back to Admin Panel</a>
+<div class="container mt-5 mb-5">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 m-0">Admin Dashboard Overview</h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">Back to Admin Panel</a>
+  </div>
 
   <div class="row g-4">
+    <!-- DISTINCT LOGINS PER DAY (7d) -->
+    <div class="col-md-4">
+      <div class="card text-bg-success" data-bs-toggle="collapse" data-bs-target="#dauCollapse" style="cursor:pointer;">
+        <div class="card-body">
+          <h5 class="card-title">
+            Distinct Logins Per Day (7d)
+            <span class="ms-1 badge text-bg-light" title="Unique users with at least one successful login per day (UTC) over the last 7 days." data-bs-toggle="tooltip">ⓘ</span>
+          </h5>
+          <p class="card-text display-6 metric">{{ distinct_logins_today }}</p>
+          <div class="small opacity-75">today</div>
+          <div class="mt-3">
+            <canvas id="dauChart" height="90" aria-label="Distinct daily logins chart"></canvas>
+          </div>
+          <div class="mt-3 d-flex gap-2 flex-wrap">
+            <span class="badge text-bg-primary" title="Share of successful vs all attempts in the last 24h" data-bs-toggle="tooltip">
+              Success rate 24h: {{ success_rate_24h }}%
+            </span>
+            <span class="badge text-bg-secondary" title="Distinct source IPs that attempted to log in in the last 24h" data-bs-toggle="tooltip">
+              Unique IPs 24h: {{ unique_ips_24h }}
+            </span>
+            {% if spike_alert %}
+              <span class="badge text-bg-danger" title="Failed logins last hour vs previous hour" data-bs-toggle="tooltip">
+                Spike: +{{ spike_delta_pct }}%
+              </span>
+            {% else %}
+              <span class="badge text-bg-success" title="Failed logins stable vs previous hour" data-bs-toggle="tooltip">
+                No spike
+              </span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="collapse mt-2" id="dauCollapse">
+        <div class="card card-body">
+          <h6 class="mb-3">Last 7 Days (unique successful logins)</h6>
+          <ul class="list-group">
+            {% for label, val in daily_active %}
+              <li class="list-group-item d-flex justify-content-between">
+                <span>{{ label }}</span>
+                <span class="fw-semibold">{{ val }}</span>
+              </li>
+            {% else %}
+              <li class="list-group-item">No data available.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUCCESSFUL LOGINS (header toggles, number navigates) -->
+    <div class="col-md-4">
+      <div class="card text-bg-success" data-bs-toggle="collapse" data-bs-target="#successfulLoginsCollapse" style="cursor:pointer;">
+        <div class="card-body">
+          <h5 class="card-title">
+            Successful Logins (24h)
+            <span class="ms-1 badge text-bg-light" title="Count of LoginAuditLog where success = 1 in the last 24 hours." data-bs-toggle="tooltip">ⓘ</span>
+          </h5>
+          <p class="card-text display-6 metric">
+            <a href="#"
+               class="metric-link"
+               title="Open filtered audit logs"
+               data-nav-url="{{ url_for('security_dashboard', success=1) }}"
+               onclick="event.stopPropagation(); navigateTo(this);">
+              {{ successful_logins_24h }}
+            </a>
+          </p>
+        </div>
+      </div>
+      <div class="collapse mt-2" id="successfulLoginsCollapse">
+        <div class="card card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="m-0">Recent Successful Logins</h6>
+            <a class="btn btn-sm btn-outline-success"
+               href="{{ url_for('security_dashboard', success=1) }}">View all</a>
+          </div>
+          <ul class="list-group">
+            {% for log in recent_successful_logins %}
+              <li class="list-group-item d-flex justify-content-between align-items-start">
+                <div class="me-auto">
+                  <span class="badge bg-success me-2">Success</span>
+                  <a href="{{ url_for('security_dashboard', email=log.email, success=1) }}" class="fw-semibold">{{ log.email }}</a>
+                  — IP: <a href="{{ url_for('security_dashboard', ip=log.ip_address, success=1) }}">{{ log.ip_address }}</a>
+                  — {{ log.location or 'Unknown' }}
+                  — {{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}
+                </div>
+                <div class="ms-2 d-flex align-items-center gap-2">
+                  <button class="btn btn-sm btn-outline-light" data-ip="{{ log.ip_address }}" onclick="copyIP(this)" title="Copy IP to clipboard" data-bs-toggle="tooltip" aria-label="Copy IP">Copy IP</button>
+                  {% if log.user_agent %}
+                    <span class="badge text-bg-light" title="{{ log.user_agent }}" data-bs-toggle="tooltip" aria-label="User Agent">UA</span>
+                  {% endif %}
+                </div>
+              </li>
+            {% else %}
+              <li class="list-group-item">No successful logins found.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAILED LOGINS (header toggles, number navigates) -->
+    <div class="col-md-4">
+      <div class="card text-bg-danger" data-bs-toggle="collapse" data-bs-target="#failedLoginsCollapse" style="cursor:pointer;">
+        <div class="card-body">
+          <h5 class="card-title">
+            Failed Login Attempts (24h)
+            <span class="ms-1 badge text-bg-light" title="Count of LoginAuditLog where success = 0 in the last 24 hours." data-bs-toggle="tooltip">ⓘ</span>
+          </h5>
+          <p class="card-text display-6 metric">
+            <a href="#"
+               class="metric-link"
+               title="Open filtered audit logs"
+               data-nav-url="{{ url_for('security_dashboard', success=0) }}"
+               onclick="event.stopPropagation(); navigateTo(this);">
+              {{ failed_logins_24h }}
+            </a>
+          </p>
+        </div>
+      </div>
+      <div class="collapse mt-2" id="failedLoginsCollapse">
+        <div class="card card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="m-0">Recent Failed Logins</h6>
+            <a class="btn btn-sm btn-outline-danger"
+               href="{{ url_for('security_dashboard', success=0) }}">View all</a>
+          </div>
+          <ul class="list-group">
+            {% for log in recent_failed_logins %}
+              <li class="list-group-item d-flex justify-content-between align-items-start">
+                <div class="me-auto">
+                  <span class="badge bg-danger me-2">Failed</span>
+                  <a href="{{ url_for('security_dashboard', email=log.email, success=0) }}" class="fw-semibold">{{ log.email }}</a>
+                  — IP: <a href="{{ url_for('security_dashboard', ip=log.ip_address, success=0) }}">{{ log.ip_address }}</a>
+                  — {{ log.location or 'Unknown' }}
+                  — {{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}
+                </div>
+                <div class="ms-2 d-flex align-items-center gap-2">
+                  <button class="btn btn-sm btn-outline-secondary" data-ip="{{ log.ip_address }}" onclick="copyIP(this)" title="Copy IP to clipboard" data-bs-toggle="tooltip" aria-label="Copy IP">Copy IP</button>
+                  {% if log.user_agent %}
+                    <span class="badge text-bg-light" title="{{ log.user_agent }}" data-bs-toggle="tooltip" aria-label="User Agent">UA</span>
+                  {% endif %}
+                </div>
+              </li>
+            {% else %}
+              <li class="list-group-item">No failed login attempts.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Secondary row: growth & status -->
+  <div class="row g-4 mt-1">
     <!-- TOTAL USERS -->
     <div class="col-md-4">
       <div class="card text-bg-primary" data-bs-toggle="collapse" data-bs-target="#allUsersCollapse" style="cursor:pointer;">
         <div class="card-body">
-          <h5 class="card-title">Total Registered Users</h5>
-          <p class="card-text display-6">{{ total_users }}</p>
+          <h5 class="card-title">
+            Total Registered Users
+            <span class="ms-1 badge text-bg-light" title="All users in the system." data-bs-toggle="tooltip">ⓘ</span>
+          </h5>
+          <p class="card-text display-6 metric">{{ total_users }}</p>
         </div>
       </div>
       <div class="collapse mt-2" id="allUsersCollapse">
         <div class="card card-body">
-          <h6>All Users (Max 100)</h6>
+          <h6 class="mb-3">All Users (Max 100)</h6>
           <ul class="list-group">
             {% for user in all_users %}
               <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
@@ -40,39 +206,20 @@
       </div>
     </div>
 
-    <!-- ACTIVE TODAY -->
-    <div class="col-md-4">
-      <div class="card text-bg-success" data-bs-toggle="collapse" data-bs-target="#activeUsersCollapse" style="cursor:pointer;">
-        <div class="card-body">
-          <h5 class="card-title">Active Today</h5>
-          <p class="card-text display-6">{{ active_today }}</p>
-        </div>
-      </div>
-      <div class="collapse mt-2" id="activeUsersCollapse">
-        <div class="card card-body">
-          <h6>Active Users (Past 24h)</h6>
-          <ul class="list-group">
-            {% for user in active_users %}
-              <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
-            {% else %}
-              <li class="list-group-item">No active users.</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
-    </div>
-
-    <!-- NEW SIGNUPS -->
+    <!-- NEW SIGNUPS 24h -->
     <div class="col-md-4">
       <div class="card text-bg-info" data-bs-toggle="collapse" data-bs-target="#newSignupsCollapse" style="cursor:pointer;">
         <div class="card-body">
-          <h5 class="card-title">New Signups (24h)</h5>
-          <p class="card-text display-6">{{ new_signups }}</p>
+          <h5 class="card-title">
+            New Signups (24h)
+            <span class="ms-1 badge text-bg-light" title="Users created in the last 24 hours." data-bs-toggle="tooltip">ⓘ</span>
+          </h5>
+          <p class="card-text display-6 metric">{{ new_signups }}</p>
         </div>
       </div>
       <div class="collapse mt-2" id="newSignupsCollapse">
         <div class="card card-body">
-          <h6>New Users (Past 24h)</h6>
+          <h6 class="mb-3">New Users (Past 24h)</h6>
           <ul class="list-group">
             {% for user in recent_users %}
               <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
@@ -84,61 +231,20 @@
       </div>
     </div>
 
-    <!-- SUCCESSFUL LOGINS -->
-    <div class="col-md-4">
-      <div class="card text-bg-success" data-bs-toggle="collapse" data-bs-target="#successfulLoginsCollapse" style="cursor:pointer;">
-        <div class="card-body">
-          <h5 class="card-title">Successful Logins (24h)</h5>
-          <p class="card-text display-6">{{ successful_logins_24h }}</p>
-        </div>
-      </div>
-      <div class="collapse mt-2" id="successfulLoginsCollapse">
-        <div class="card card-body">
-          <h6>Recent Successful Logins</h6>
-          <ul class="list-group">
-            {% for log in recent_successful_logins %}
-              <li class="list-group-item">{{ log.email }} — IP: {{ log.ip_address }} — {{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</li>
-            {% else %}
-              <li class="list-group-item">No successful logins found.</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
-    </div>
-
-    <!-- FAILED LOGINS -->
-    <div class="col-md-4">
-      <div class="card text-bg-danger" data-bs-toggle="collapse" data-bs-target="#failedLoginsCollapse" style="cursor:pointer;">
-        <div class="card-body">
-          <h5 class="card-title">Failed Login Attempts (24h)</h5>
-          <p class="card-text display-6">{{ failed_logins_24h }}</p>
-        </div>
-      </div>
-      <div class="collapse mt-2" id="failedLoginsCollapse">
-        <div class="card card-body">
-          <h6>Recent Failed Logins</h6>
-          <ul class="list-group">
-            {% for log in recent_failed_logins %}
-              <li class="list-group-item">{{ log.email }} — IP: {{ log.ip_address }} — {{ log.timestamp.strftime('%Y-%m-%d %H:%M') }}</li>
-            {% else %}
-              <li class="list-group-item">No failed login attempts.</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
-    </div>
-
     <!-- DEACTIVATED ACCOUNTS -->
     <div class="col-md-4">
-      <div class="card text-bg-danger" data-bs-toggle="collapse" data-bs-target="#deactivatedUsersCollapse" style="cursor:pointer;">
+      <div class="card text-bg-dark" data-bs-toggle="collapse" data-bs-target="#deactivatedUsersCollapse" style="cursor:pointer;">
         <div class="card-body">
-          <h5 class="card-title">Deactivated Accounts</h5>
-          <p class="card-text display-6">{{ deactivated_accounts }}</p>
+          <h5 class="card-title">
+            Deactivated Accounts
+            <span class="ms-1 badge text-bg-light" title="Users whose accounts are disabled." data-bs-toggle="tooltip">ⓘ</span>
+          </h5>
+          <p class="card-text display-6 metric">{{ deactivated_accounts }}</p>
         </div>
       </div>
       <div class="collapse mt-2" id="deactivatedUsersCollapse">
         <div class="card card-body">
-          <h6>Deactivated Users</h6>
+          <h6 class="mb-3">Deactivated Users</h6>
           <ul class="list-group">
             {% for user in deactivated_users %}
               <li class="list-group-item">{{ user.username }} ({{ user.email }})</li>
@@ -151,41 +257,159 @@
     </div>
   </div>
 
+  <!-- Top IPs chart -->
   <div class="mt-5">
-    <h4>Top 5 IPs with Failed Login Attempts (24h)</h4>
-    <canvas id="ipChart" height="150"></canvas>
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <h4 class="m-0">Top 5 IPs with Failed Login Attempts (24h)</h4>
+      <span class="badge text-bg-light" title="Click a bar to filter logs by that IP." data-bs-toggle="tooltip">Interactive</span>
+    </div>
+    <div class="card p-3">
+      <canvas id="ipChart" height="150" aria-label="Top failed login IPs chart"></canvas>
+    </div>
   </div>
+
+  <!-- Peak login hour (7d) -->
+  <div class="mt-5">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <h4 class="m-0">Peak Login Hour (last 7 days)</h4>
+      {% if peak_hour is not none %}
+        <span class="badge text-bg-light">Peak: {{ "%02d:00" % peak_hour }} ({{ peak_hour_count }})</span>
+      {% endif %}
+    </div>
+    <div class="card p-3">
+      <canvas id="peakHourChart" height="120" aria-label="Logins by hour chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Top Countries (24h) & Admin Actions (24h) -->
+  <div class="row g-4 mt-4">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Top Countries (24h)</h5>
+          <ul class="list-group">
+            {% for country, cnt in top_countries_24h %}
+              <li class="list-group-item d-flex justify-content-between">
+                <span>{{ country }}</span>
+                <span class="fw-semibold">{{ cnt }}</span>
+              </li>
+            {% else %}
+              <li class="list-group-item">No data.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Admin / Security Actions (24h)</h5>
+          <ul class="list-group">
+            {% for a_type, cnt in admin_actions_24h %}
+              <li class="list-group-item d-flex justify-content-between">
+                <span>{{ a_type }}</span>
+                <span class="fw-semibold">{{ cnt }}</span>
+              </li>
+            {% else %}
+              <li class="list-group-item">No admin actions in the last 24h.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Required JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-  const ctx = document.getElementById('ipChart').getContext('2d');
-  const ipChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: {{ top_failed_ips | map(attribute=0) | list | tojson }},
-      datasets: [{
-        label: 'Failed Logins',
-        data: {{ top_failed_ips | map(attribute=1) | list | tojson }},
-        backgroundColor: 'rgba(255, 99, 132, 0.7)',
-        borderColor: 'rgba(255, 99, 132, 1)',
-        borderWidth: 1
-      }]
-    },
-    options: {
-      responsive: true,
-      scales: {
-        y: {
-          beginAtZero: true,
-          title: { display: true, text: 'Attempts' }
-        },
-        x: {
-          title: { display: true, text: 'IP Address' }
-        }
-      }
-    }
+  // Simple navigator for "metric" links (prevents collapse toggle)
+  function navigateTo(el) {
+    const url = el.getAttribute('data-nav-url');
+    if (url) window.location.href = url;
+  }
+
+  // Enable Bootstrap tooltips
+  document.addEventListener('DOMContentLoaded', () => {
+    const tooltipTriggerList = Array.from(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el));
   });
+
+  // Copy IP to clipboard helper
+  function copyIP(btn) {
+    const ip = btn.getAttribute('data-ip');
+    if (!ip) return;
+    navigator.clipboard.writeText(ip).then(() => {
+      const original = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => (btn.textContent = original), 1200);
+    }).catch(() => {
+      const original = btn.textContent;
+      btn.textContent = 'Error';
+      setTimeout(() => (btn.textContent = original), 1200);
+    });
+  }
+
+  // Distinct logins per day (7d) line chart
+  (function initDAU(){
+    const el = document.getElementById('dauChart');
+    if (!el) return;
+    const labels = {{ daily_active|map(attribute=0)|list|tojson }};
+    const data    = {{ daily_active|map(attribute=1)|list|tojson }};
+    new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ label: 'Distinct logins', data, fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2 }] },
+      options: {
+        maintainAspectRatio: false, responsive: true, plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: 'Users' } }, x: { title: { display: true, text: 'Date (UTC)' } } }
+      }
+    });
+  })();
+
+  // Top failed IPs bar chart (clickable)
+  (function initTopIPs(){
+    const ctx = document.getElementById('ipChart');
+    if (!ctx) return;
+    const ipLabels = {{ top_failed_ips | map(attribute=0) | list | tojson }};
+    const ipData   = {{ top_failed_ips | map(attribute=1) | list | tojson }};
+    new Chart(ctx.getContext('2d'), {
+      type: 'bar',
+      data: { labels: ipLabels, datasets: [{ label: 'Failed Logins', data: ipData, borderWidth: 1 }] },
+      options: {
+        responsive: true,
+        onClick: function (evt, elements) {
+          if (elements && elements.length > 0) {
+            const idx = elements[0].index;
+            const ip = ipLabels[idx];
+            const url = "{{ url_for('security_dashboard') }}" + "?success=0&ip=" + encodeURIComponent(ip);
+            window.location.href = url;
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, title: { display: true, text: 'Attempts' } },
+          x: { title: { display: true, text: 'IP Address' } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  })();
+
+  // Peak login hour (7d) chart
+  (function initPeakHour(){
+    const el = document.getElementById('peakHourChart');
+    if (!el) return;
+    const labels = {{ peak_labels|tojson }};
+    const data   = {{ peak_values|tojson }};
+    new Chart(el.getContext('2d'), {
+      type: 'bar',
+      data: { labels: labels.map(h => (h<10?'0':'') + h + ':00'), datasets: [{ label: 'Successful logins (7d)', data, borderWidth: 1 }] },
+      options: {
+        responsive: true, plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: 'Logins' } }, x: { title: { display: true, text: 'Hour (UTC)' } } }
+      }
+    });
+  })();
 </script>
 </body>
 </html>
