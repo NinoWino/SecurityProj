@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">Fraud Checks</h2>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <strong>Risk levels</strong>:
+    <ul class="list-inline mb-0">
+      {% for it in risk_legend %}
+        <li class="list-inline-item">
+          <span class="badge
+            {% if it.label == 'Very Low' %}bg-secondary
+            {% elif it.label == 'Low' %}bg-success
+            {% elif it.label == 'Moderate' %}bg-warning text-dark
+            {% elif it.label == 'High' %}bg-danger
+            {% elif it.label == 'Critical' %}bg-danger
+            {% else %}bg-secondary{% endif %}
+          ">{{ it.label }}</span> {{ it.range }}
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<table class="table table-striped align-middle">
+  <thead>
+  <tr>
+    <th>ID</th>
+    <th>When</th>
+    <th>User</th>
+    <th>Email</th>
+    <th>Where</th>
+    <th>Score</th>
+    <th>Level</th>
+    <th>Risky?</th>
+    <th>IP</th>
+    <th>Reasons</th>
+  </tr>
+</thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.when }}</td>
+      <td>{{ r.user_id }}</td>
+<td>{{ r.email }}</td>
+      <td>{{ r.where }}</td>
+      <td>{{ r.score }}</td>
+      <td>
+        <span class="badge
+          {% if r.level == 'Very Low' %}bg-secondary
+          {% elif r.level == 'Low' %}bg-success
+          {% elif r.level == 'Moderate' %}bg-warning text-dark
+          {% elif r.level == 'High' %}bg-danger
+          {% elif r.level == 'Critical' %}bg-danger
+          {% else %}bg-secondary{% endif %}
+        ">{{ r.level }}</span>
+      </td>
+      <td>{{ 'Yes' if r.risky else 'No' }}</td>
+      <td>{{ r.ip }}</td>
+      <td>{{ r.reasons }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
