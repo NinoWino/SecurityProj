@@ -715,6 +715,13 @@ def login():
             flash("Your account has been deactivated. Please contact support.", "danger")
             return redirect(url_for('login'))
 
+            # Handle force password reset case
+        if getattr(user, 'force_password_reset', False):
+            # Mark the user who must reset, then send them to the reset screen.
+            session['expired_user_id'] = user.id
+            # (If you currently log them in here, consider skipping login until reset is done)
+            flash('Your password has expired and must be changed.', 'warning')
+            return redirect(url_for('force_password_reset'))
         if user:
             # → account lockout
             if user.is_locked:
@@ -2124,47 +2131,85 @@ def delete_account():
 @app.route('/force_password_reset', methods=['GET', 'POST'])
 def force_password_reset():
     from forms import ForcePasswordResetForm
+    from werkzeug.security import generate_password_hash, check_password_hash
     form = ForcePasswordResetForm()
     user_id = session.get('expired_user_id')
 
+    # Only allow if we have the target user in session
     if not user_id:
         return redirect(url_for('login'))
 
     user = db.session.get(User, user_id)
+    if not user:
+        return redirect(url_for('login'))
+
     error = None
 
     if form.validate_on_submit():
-        from werkzeug.security import generate_password_hash, check_password_hash
+        old_pw = form.old_password.data or ""
+        new_pw = form.new_password.data or ""
 
-        if not check_password_hash(user.password, form.old_password.data):
+        # 1) Verify the current password (safer: always require it here)
+        if not check_password_hash(user.password, old_pw):
             error = 'Current password is incorrect.'
-        elif check_password_hash(user.password, form.new_password.data):
+        # 2) New must differ from current
+        elif check_password_hash(user.password, new_pw):
             error = 'New password must be different from the old password.'
-        elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
-            error = 'You cannot reuse one of your last 3 passwords.'
+        # 3) Enforce "no reuse last 3"
         else:
-            new_hash = generate_password_hash(form.new_password.data)
-            user.password = new_hash
-            user.password_last_changed = datetime.utcnow()
-            user.password_history.append(new_hash)
-            if len(user.password_history) > 3:
-                user.password_history = user.password_history[-3:]
+            # IMPORTANT: compare the new password against the *history of prior hashes*
+            # Build the comparison set: last 3 old hashes + current hash
+            prior_hashes = list(user.password_history or []) + [user.password]
+            if any(check_password_hash(h, new_pw) for h in prior_hashes[-3:]):
+                error = 'You cannot reuse one of your last 3 passwords.'
+            else:
+                # 4) Update correctly: push *current* hash into history, then set new
+                prev_changed = getattr(user, 'password_last_changed', None)
+                old_hash = user.password
+                new_hash = generate_password_hash(new_pw)
 
-            db.session.commit()
-            log_system_action(
-                user_id=user.id,
-                action_type="Forced Password Reset",
-                description="User reset password after expiration.",
-                category="SECURITY",
-                changed_fields={"password": ["previous_hash", "new_hash_truncated"]}
-            )
+                hist = list(user.password_history or [])
+                hist.append(old_hash)            # store the hash we just replaced
+                user.password_history = hist[-3:]  # keep only last 3
 
-            session.pop('expired_user_id', None)
-            flash('Password updated successfully. Please log in.', 'success')
-            return redirect(url_for('login'))
+                user.password = new_hash
+                user.password_last_changed = datetime.utcnow()
+
+                # 5) Clear forced-reset flag & any lockouts that might block login
+                if hasattr(user, 'force_password_reset'):
+                    user.force_password_reset = False
+                if getattr(user, 'is_locked', False):
+                    user.is_locked = False
+                    user.failed_attempts = 0
+                    user.last_failed_login = None
+
+                db.session.commit()
+
+                # 6) Audit (no secrets)
+                try:
+                    log_system_action(
+                        user_id=user.id,
+                        action_type="Forced Password Reset",
+                        description="User reset password after expiration/force.",
+                        category="SECURITY",
+                        affected_object_id=user.id,
+                        changed_fields={
+                            "password_last_changed": {
+                                "old": str(prev_changed) if prev_changed else None,
+                                "new": str(user.password_last_changed)
+                            },
+                            "force_password_reset": ["True", "False"]  # semantic diff only
+                        }
+                    )
+                except Exception:
+                    pass  # never break the flow on logging
+
+                # 7) Clean session marker & require fresh login
+                session.pop('expired_user_id', None)
+                flash('Password updated successfully. Please log in.', 'success')
+                return redirect(url_for('login'))
 
     return render_template('force_password_reset.html', form=form, error=error)
-
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
