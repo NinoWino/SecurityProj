@@ -2924,13 +2924,14 @@ def edit_user(user_id):
             "email": user.email,
             "role_id": user.role_id
         }
+        new_role_id = int(request.form.get("role_id", user.role_id))
         # ✅ Only Master Admin can assign or keep role 4
-        if role_id == 4 and not current_user.is_master_admin:
+        if new_role_id == 4 and not current_user.is_master_admin:
             flash("Only a Master Admin can assign the Master Admin role.", "danger")
             return redirect(url_for('edit_user', user_id=user.id))
 
         # ✅ (Optional) Prevent downgrading an existing Master Admin unless current user is Master Admin
-        if user.role_id == 4 and not current_user.is_master_admin and role_id != 4:
+        if user.role_id == 4 and not current_user.is_master_admin and new_role_id != 4:
             flash("Only a Master Admin can modify a Master Admin account.", "danger")
             return redirect(url_for('edit_user', user_id=user.id))
 
