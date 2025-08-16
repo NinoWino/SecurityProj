@@ -58,7 +58,7 @@ app.config.update({
     'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
 })
 
-
+csrf = CSRFProtect(app)
 
 # Ensure upload folder exists
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'static', 'uploads')
