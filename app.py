@@ -2655,20 +2655,32 @@ def edit_user(user_id):
 def toggle_user_activation(user_id):
     user = User.query.get_or_404(user_id)
     original_status = user.is_active
+
+    # ✅ Prevent deactivating master admin
+    if getattr(user, 'is_master_admin', False):
+        flash("This account is protected and cannot be deactivated.", "danger")
+        return redirect(url_for('manage_users'))
+
+    # Toggle activation
     user.is_active = not user.is_active
     db.session.commit()
 
-    # ✅ Log the change
+    # Log the change
     log_system_action(
         user_id=current_user.id,
         action_type="Admin Toggled User Activation",
         description=f"{user.username} is now {'active' if user.is_active else 'deactivated'}",
         category="ADMIN",
         affected_object_id=user.id,
-        changed_fields={
-            "is_active": [original_status, user.is_active]
-        }
+        changed_fields={"is_active": [original_status, user.is_active]}
     )
+
+    # ✅ If the current admin deactivated themselves → force logout
+    if user.id == current_user.id and not user.is_active:
+        logout_user()
+        session.clear()
+        flash("You deactivated your own account. You have been logged out. Another admin must reactivate your account to regain access.", "warning")
+        return redirect(url_for('login'))
 
     flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
     return redirect(url_for('manage_users'))

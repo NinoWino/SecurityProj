@@ -27,6 +27,7 @@ class User(UserMixin, db.Model):
     birthdate = db.Column(db.Date, nullable=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     role = db.relationship('Role', back_populates='users')
+    is_master_admin = db.Column(db.Boolean, default=False)
 
     # Lockout & 2FA
     failed_attempts = db.Column(db.Integer, default=0)

@@ -2,8 +2,8 @@
 {% block content %}
 <style>
   .dashboard-container {
-    max-width: 1100px;   /* keeps content nicely centered */
-    margin: 2rem auto;   /* space around */
+    max-width: 1100px;
+    margin: 2rem auto;
   }
 </style>
 
@@ -75,39 +75,57 @@
                 {% endif %}
               </td>
               <td class="text-center">
-                  <span class="badge {% if user.is_active %}bg-success{% else %}bg-danger{% endif %}">
-                    {% if user.is_active %}Active{% else %}Deactivated{% endif %}
-                  </span>
-                  {% if user.force_password_reset %}
-                    <div class="mt-1">
-                      <span class="badge bg-danger">Reset required</span>
-                    </div>
-                  {% endif %}
-                </td>
-                <td class="text-center">
-                  <div class="d-flex justify-content-center align-items-center gap-2">
-                    <a href="{{ url_for('edit_user', user_id=user.id) }}"
-                       class="btn btn-sm btn-outline-primary">
-                      Edit
-                    </a>
-
-                    <a href="{{ url_for('toggle_user_activation', user_id=user.id) }}"
-                       class="btn btn-sm {% if user.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
-                      {% if user.is_active %}Deactivate{% else %}Reactivate{% endif %}
-                    </a>
-
-                    <form method="post"
-                          action="{{ url_for('admin_force_password_reset', user_id=user.id) }}"
-                          class="d-inline">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <button type="submit"
-                              class="btn btn-sm btn-outline-danger"
-                              onclick="return confirm('Force password reset for {{ user.username }}?');">
-                        Force reset
-                      </button>
-                    </form>
+                <span class="badge {% if user.is_active %}bg-success{% else %}bg-danger{% endif %}">
+                  {% if user.is_active %}Active{% else %}Deactivated{% endif %}
+                </span>
+                {% if user.force_password_reset %}
+                  <div class="mt-1">
+                    <span class="badge bg-danger">Reset required</span>
                   </div>
-                </td>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                <div class="d-flex justify-content-center align-items-center gap-2">
+                  <!-- Edit -->
+                  <a href="{{ url_for('edit_user', user_id=user.id) }}"
+                     class="btn btn-sm btn-outline-primary">
+                    Edit
+                  </a>
+
+                  <!-- Deactivate / Reactivate -->
+                  <a href="#"
+                     class="btn btn-sm {% if user.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+                     data-bs-toggle="modal"
+                     data-bs-target="#confirmModal"
+                     data-message="{% if user.is_master_admin %}
+                       👑 This is the Master Admin account. It is protected and cannot be deactivated.
+                     {% elif user.id == current_user.id %}
+                       🚪 You are choosing to deactivate your own account. You’ll be logged out right away, and will need another admin to reactivate you. Continue?
+                     {% else %}
+                       Are you sure you want to change this account’s status?
+                     {% endif %}"
+                     data-href="{{ url_for('toggle_user_activation', user_id=user.id) }}"
+                     data-context="{% if user.is_master_admin %}master{% elif user.id == current_user.id %}self{% else %}normal{% endif %}">
+                    {% if user.is_active %}Deactivate{% else %}Reactivate{% endif %}
+                  </a>
+
+                  <!-- Force password reset -->
+                  <form method="post"
+                        action="{{ url_for('admin_force_password_reset', user_id=user.id) }}"
+                        class="d-inline reset-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-danger"
+                            data-bs-toggle="modal"
+                            data-bs-target="#confirmModal"
+                            data-message="🔑 Force password reset for {{ user.username }}?"
+                            data-form-id="reset-{{ user.id }}"
+                            data-context="reset">
+                      Force reset
+                    </button>
+                  </form>
+                </div>
+              </td>
             </tr>
           {% endfor %}
           </tbody>
@@ -116,4 +134,74 @@
     </div>
   </div>
 </div>
+
+<!-- Bootstrap Confirmation Modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div id="confirmHeader" class="modal-header">
+        <h5 class="modal-title">⚠️ Confirmation Required</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="confirmMessage">
+        Are you sure you want to proceed?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <a href="#" id="confirmBtn" class="btn btn-danger">Yes, Continue</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const confirmModal = document.getElementById('confirmModal');
+  confirmModal.addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+    const message = button.getAttribute('data-message');
+    const href = button.getAttribute('data-href');
+    const formId = button.getAttribute('data-form-id');
+    const context = button.getAttribute('data-context');
+
+    const messageBox = confirmModal.querySelector('#confirmMessage');
+    const confirmBtn = confirmModal.querySelector('#confirmBtn');
+    const header = confirmModal.querySelector('#confirmHeader');
+
+    // Reset header classes
+    header.className = "modal-header";
+    const title = header.querySelector('.modal-title');
+    const closeBtn = header.querySelector('.btn-close');
+    closeBtn.className = "btn-close"; // reset
+
+    messageBox.textContent = message;
+
+    // Style based on context
+    if (context === "master") {
+      header.classList.add("bg-primary", "text-white");
+      closeBtn.classList.add("btn-close-white");
+      confirmBtn.style.display = "none"; // disable confirm
+    } else if (context === "self") {
+      header.classList.add("bg-danger", "text-white");
+      closeBtn.classList.add("btn-close-white");
+      confirmBtn.style.display = "inline-block";
+      confirmBtn.setAttribute('href', href);
+      confirmBtn.onclick = null;
+    } else if (context === "reset") {
+      header.classList.add("bg-danger", "text-white");
+      closeBtn.classList.add("btn-close-white");
+      confirmBtn.style.display = "inline-block";
+      confirmBtn.removeAttribute('href');
+      confirmBtn.onclick = function() {
+        button.closest('form').submit();
+      };
+    } else {
+      header.classList.add("bg-warning", "text-dark");
+      confirmBtn.style.display = "inline-block";
+      if (href) {
+        confirmBtn.setAttribute('href', href);
+        confirmBtn.onclick = null;
+      }
+    }
+  });
+</script>
 {% endblock %}
