@@ -675,32 +675,81 @@ def ids_behavior_anomaly(resp):
     return resp
 # ------- end IDS -------
 
+RULE_EXPLAIN = {
+    "Path Traversal": "Attempt to access parent directories using ../ or ..\\.",
+    "Windows Sys Path": "References to Windows system directories (e.g., C:\\Windows\\System32).",
+    "Unix Sensitive File": "References to sensitive Unix files (e.g., /etc/passwd).",
+    "SQLi Tautology": "Classic SQL injection using ' OR 1=1 style payloads.",
+    "SQLi UNION": "Attempt to inject UNION SELECT into SQL queries.",
+    "SQLi Time": "Time-based SQLi patterns like sleep() / benchmark().",
+    "XSS Probe": "Script tags or on* event handlers indicating XSS attempts.",
+    "Command Injection": "Shell metacharacters like ;, ||, &&, backticks, or $(...).",
+    "File/Wrap Scheme": "Use of file://, php://, gopher://, etc. to access files/streams.",
+    "SSRF Local": "Attempt to hit loopback / link-local addresses (127.0.0.1, 169.254.x.x).",
+    "Null Byte": "Null-byte (%00) injection attempt.",
+    "Overlong Path/Query": "Suspiciously long path or query, often used for fuzzing.",
+    "Template Injection": "SSTI markers like {{...}} or {%...%}.",
+    "Jinja Object Abuse": "Probing Jinja internals (e.g., __globals__).",
+    "IDS Anomaly: Many 4xx": "Unusual number of 4xx responses in a short window.",
+    "Upload Dangerous Extension": "Upload filename has dangerous extension (e.g., .php, .exe).",
+    "Upload Double Extension": "Upload filename attempts double-extension (e.g., .php.jpg).",
+    "Upload MIME Mismatch": "Uploaded file MIME type doesn’t match allow-list.",
+    "Upload Oversize": "Upload exceeds configured size threshold."
+}
+
 @app.route('/admin/ids')
 @login_required
 @role_required(3)
 def admin_ids():
-    rows = SystemAuditLog.query.filter_by(category="IDS")\
-        .order_by(SystemAuditLog.id.desc()).limit(200).all()
+    rows = (db.session.query(SystemAuditLog)
+            .filter(SystemAuditLog.category == "IDS")
+            .order_by(SystemAuditLog.id.desc())
+            .limit(500)
+            .all())
 
     events = []
     for r in rows:
+        # parse JSON details safely
         try:
             d = json.loads(r.description or "{}")
         except Exception:
             d = {}
+
+        # get user email with safe fallbacks (handle encrypted stores if you have a decrypt helper)
+        email = None
+        try:
+            u = User.query.get(r.user_id) if r.user_id else None
+            if u:
+                # Try commonly-used attributes first
+                email = getattr(u, "email_plain", None) \
+                        or getattr(u, "email_decrypted", None) \
+                        or getattr(u, "email", None)
+                # If you have a decrypt function, use it
+                if callable(globals().get("decrypt_email")):
+                    try:
+                        email = globals()["decrypt_email"](email)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         events.append({
             "id": r.id,
-            "when": r.timestamp,
-            "user_id": r.user_id,
-            "endpoint": d.get("endpoint") or r.endpoint,
-            "method": d.get("method") or r.http_method,
+            "when": r.timestamp,                     # already a datetime
+            "user_email": email or f"User#{r.user_id}",
+            "rules": d.get("rules") or [],
+            "method": d.get("method") or r.http_method or "",
+            "endpoint": d.get("endpoint") or r.endpoint or "",
             "path": d.get("path") or "",
             "qs": d.get("qs") or "",
-            "rules": d.get("rules") or [],
-            "ip": d.get("ip") or r.ip_address,
-            "ua": (d.get("ua") or r.user_agent or "")[:120],
+            "ip": d.get("ip") or r.ip_address or "",
+            "ua": (d.get("ua") or r.user_agent or "")[:200],
         })
-    return render_template('admin_ids.html', events=events)
+
+    return render_template('admin_ids.html',
+                           events=events,
+                           rule_explain=RULE_EXPLAIN,
+                           total=len(events))
 
 
 
