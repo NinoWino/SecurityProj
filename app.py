@@ -953,9 +953,7 @@ def notify_ids_alert(user, details: dict):
     )
     _send_security_alert(subject, body)
 
-    @app.errorhandler(Exception)
-    def handle_unexpected_error(e):
-        return render_template('error.html', message="An unexpected error occurred."), 500
+
 
 # --- END SECURITY ALERT EMAILS -----------------------------------------------
 
