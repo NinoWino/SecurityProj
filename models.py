@@ -55,6 +55,9 @@ class User(UserMixin, db.Model):
     # Audit
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    #force password reset
+    force_password_reset = db.Column(db.Boolean, nullable=False, default=False)
+
 
 class LoginAuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)

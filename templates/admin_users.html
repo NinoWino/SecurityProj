@@ -74,20 +74,40 @@
                   <span class="badge bg-light text-dark">Unknown</span>
                 {% endif %}
               </td>
-              <td>
-                {% if user.is_active %}
-                  <span class="badge bg-success">Active</span>
-                {% else %}
-                  <span class="badge bg-danger">Deactivated</span>
-                {% endif %}
-              </td>
               <td class="text-center">
-                <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-primary">Edit</a>
-                <a href="{{ url_for('toggle_user_activation', user_id=user.id) }}"
-                   class="btn btn-sm {% if user.is_active %}btn-warning{% else %}btn-success{% endif %}">
-                  {% if user.is_active %}Deactivate{% else %}Reactivate{% endif %}
-                </a>
-              </td>
+                  <span class="badge {% if user.is_active %}bg-success{% else %}bg-danger{% endif %}">
+                    {% if user.is_active %}Active{% else %}Deactivated{% endif %}
+                  </span>
+                  {% if user.force_password_reset %}
+                    <div class="mt-1">
+                      <span class="badge bg-danger">Reset required</span>
+                    </div>
+                  {% endif %}
+                </td>
+                <td class="text-center">
+                  <div class="d-flex justify-content-center align-items-center gap-2">
+                    <a href="{{ url_for('edit_user', user_id=user.id) }}"
+                       class="btn btn-sm btn-outline-primary">
+                      Edit
+                    </a>
+
+                    <a href="{{ url_for('toggle_user_activation', user_id=user.id) }}"
+                       class="btn btn-sm {% if user.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                      {% if user.is_active %}Deactivate{% else %}Reactivate{% endif %}
+                    </a>
+
+                    <form method="post"
+                          action="{{ url_for('admin_force_password_reset', user_id=user.id) }}"
+                          class="d-inline">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button type="submit"
+                              class="btn btn-sm btn-outline-danger"
+                              onclick="return confirm('Force password reset for {{ user.username }}?');">
+                        Force reset
+                      </button>
+                    </form>
+                  </div>
+                </td>
             </tr>
           {% endfor %}
           </tbody>
