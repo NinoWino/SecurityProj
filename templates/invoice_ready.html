@@ -10,9 +10,97 @@
     <strong>Password format:</strong> <code>email_prefix + birthdate</code><br>
     <strong>Your password:</strong> <code>{{ password_hint }}</code>
     <br>
-    (e.g., if email is <em>john@example.com</em> and birthdate is <em>2000-01-01</em>, password is <code>john20000101</code>)
+    (e.g., if email is <em>john@example.com</em> and birthdate is <em>2000-01-01</em>,
+    password is <code>john20000101</code>)
   </div>
 
-  <a href="{{ url_for('download_invoice') }}" class="btn btn-primary mt-3">Download Invoice</a>
+  <!-- Start disabled; we enable it after /save_cart succeeds -->
+  <a id="downloadBtn"
+     href="{{ url_for('download_invoice') }}"
+     class="btn btn-primary mt-3 disabled"
+     aria-disabled="true"
+     style="pointer-events: none;">
+    Preparing invoice…
+  </a>
+
+  <div id="prepMsg" class="text-muted mt-2">Finalizing your invoice…</div>
+  <div id="errorMsg" class="text-danger mt-2" style="display:none;"></div>
 </div>
+
+<script>
+(function () {
+  // Needs <meta name="csrf-token" content="{{ csrf_token() }}"> in base.html
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || null;
+  const downloadBtn = document.getElementById("downloadBtn");
+  const prepMsg = document.getElementById("prepMsg");
+  const errorMsg = document.getElementById("errorMsg");
+
+  // 1) Save cart to server when this page loads (so invoice has items)
+  async function saveCartToServer() {
+    const cart = JSON.parse(localStorage.getItem("cart") || "[]");
+
+    try {
+      const res = await fetch("{{ url_for('save_cart') }}", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...(CSRF ? { "X-CSRFToken": CSRF, "X-CSRF-Token": CSRF } : {})
+        },
+        body: JSON.stringify(cart)
+      });
+
+      if (res.redirected) {
+        // If the session expired, follow login redirect
+        window.location.href = res.url;
+        return;
+      }
+      if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+
+      // Enable download button now that the server has the cart
+      downloadBtn.classList.remove("disabled");
+      downloadBtn.removeAttribute("aria-disabled");
+      downloadBtn.style.pointerEvents = "";
+      downloadBtn.textContent = "Download Invoice";
+      if (prepMsg) prepMsg.textContent = "Invoice is ready.";
+    } catch (err) {
+      if (errorMsg) {
+        errorMsg.style.display = "";
+        errorMsg.textContent = "Failed to prepare invoice: " + (err?.message || err || "");
+      }
+      if (prepMsg) prepMsg.style.display = "none";
+    }
+  }
+
+  // 2) ONLY clear local cart when the user clicks "Download Invoice"
+  function wireDownloadClear() {
+    downloadBtn.addEventListener("click", () => {
+      try {
+        localStorage.removeItem("cart");
+        window.cart = [];
+
+        // Update badge/off-canvas immediately
+        if (window.updateCartUI) {
+          window.updateCartUI();
+        } else {
+          const items = document.getElementById("cartItems");
+          const count = document.getElementById("cartCount");
+          const total = document.getElementById("cartTotal");
+          if (items) items.innerHTML = '<p class="text-muted text-center">Your cart is empty</p>';
+          if (count) count.textContent = '0';
+          if (total) total.textContent = '$0.00';
+        }
+      } catch (e) {
+        console.warn("Cart clear failed:", e);
+      }
+      // Do NOT prevent default — allow the href to download the encrypted PDF
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    saveCartToServer();
+    wireDownloadClear();
+  });
+})();
+</script>
 {% endblock %}

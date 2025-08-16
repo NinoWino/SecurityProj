@@ -115,9 +115,14 @@
 
 <!-- Init tooltips + copy buttons (search removed) -->
 <script>
-  // Bootstrap tooltips
-  const ttriggers = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-  ttriggers.forEach(el => new bootstrap.Tooltip(el));
+document.addEventListener('DOMContentLoaded', () => {
+  // Init Bootstrap tooltips AFTER Bootstrap JS has loaded
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    bootstrap.Tooltip.getOrCreateInstance(el, {
+      container: 'body',   // avoids clipping inside scrollable tables
+      boundary: 'window'
+    });
+  });
 
   // Copy-to-clipboard for IP
   document.querySelectorAll('.copy-btn').forEach(btn => {
@@ -129,5 +134,6 @@
       });
     });
   });
+});
 </script>
 {% endblock %}

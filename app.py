@@ -132,7 +132,7 @@ limiter = Limiter(
 )
 
 # --- Password expiry window (defaults to 3 minutes for testing) ---
-PASSWORD_MAX_AGE = timedelta(minutes=int(os.getenv('PASSWORD_MAX_AGE_MINUTES', '30')))
+PASSWORD_MAX_AGE = timedelta(minutes=int(os.getenv('PASSWORD_MAX_AGE_MINUTES', '1000')))
 
 def password_is_expired(user) -> bool:
     ref = getattr(user, 'password_last_changed', None) or getattr(user, 'created_at', None)
@@ -952,6 +952,11 @@ def notify_ids_alert(user, details: dict):
         f"Rules:   {rules}\n"
     )
     _send_security_alert(subject, body)
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(e):
+        return render_template('error.html', message="An unexpected error occurred."), 500
+
 # --- END SECURITY ALERT EMAILS -----------------------------------------------
 
 

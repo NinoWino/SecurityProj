@@ -7,6 +7,7 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/navbar.css') }}" />
+  <meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
 <body>
   <!-- Navbar -->
@@ -130,114 +131,78 @@
   </script>
 
 
-  <script>
-  var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
-  tooltipTriggerList.forEach(function (tooltipTriggerEl) {
-    new bootstrap.Tooltip(tooltipTriggerEl)
-  });
+<script>
+(() => {
+  // Local cart from localStorage
+  const CART_KEY = "cart";
+  window.cart = JSON.parse(localStorage.getItem(CART_KEY) || "[]");
+  const saveCart = () => localStorage.setItem(CART_KEY, JSON.stringify(window.cart));
 
+  function updateCartUI() {
+    const container = document.getElementById("cartItems");
+    const countEl   = document.getElementById("cartCount");
+    const totalEl   = document.getElementById("cartTotal");
+    if (!container || !countEl || !totalEl) return;
 
-// Declare cart globally from localStorage or initialize as empty
-const cart = JSON.parse(localStorage.getItem("cart")) || [];
+    container.innerHTML = "";
+    let total = 0;
 
-function updateCartUI() {
-  const cartItemsContainer = document.getElementById("cartItems");
-  const cartCount = document.getElementById("cartCount");
-  const cartTotal = document.getElementById("cartTotal");
+    if (!window.cart.length) {
+      container.innerHTML = '<p class="text-muted text-center">Your cart is empty</p>';
+    } else {
+      window.cart.forEach((item, idx) => {
+        total += item.price * item.qty;
+        const row = document.createElement("div");
+        row.className = "mb-2 d-flex justify-content-between align-items-center";
+        row.innerHTML = `
+          <div><span>${item.name} x${item.qty}</span></div>
+          <div>
+            <strong>$${(item.price * item.qty).toFixed(2)}</strong>
+            <button class="btn btn-sm btn-outline-danger ms-2" data-remove="${idx}">&times;</button>
+          </div>`;
+        container.appendChild(row);
+      });
 
-  if (!cartItemsContainer || !cartCount || !cartTotal) return;
+      // remove handlers
+      container.querySelectorAll("[data-remove]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const i = Number(btn.getAttribute("data-remove"));
+          window.cart.splice(i, 1);
+          saveCart();
+          updateCartUI();
+        });
+      });
+    }
 
-  cartItemsContainer.innerHTML = "";
-  let total = 0;
+    countEl.textContent = window.cart.reduce((s, i) => s + i.qty, 0);
+    totalEl.textContent = `$${total.toFixed(2)}`;
+  }
 
-  if (cart.length === 0) {
-    cartItemsContainer.innerHTML = '<p class="text-muted text-center">Your cart is empty</p>';
-  } else {
-    cart.forEach((item, index) => {
-      const itemDiv = document.createElement("div");
-      itemDiv.classList.add("mb-2", "d-flex", "justify-content-between", "align-items-center");
-
-      itemDiv.innerHTML = `
-        <div>
-          <span>${item.name} x${item.qty}</span>
-        </div>
-        <div>
-          <strong>$${(item.price * item.qty).toFixed(2)}</strong>
-          <button class="btn btn-sm btn-outline-danger ms-2 remove-item" data-index="${index}">&times;</button>
-        </div>
-      `;
-
-      cartItemsContainer.appendChild(itemDiv);
-      total += item.price * item.qty;
-    });
-
-    // Attach remove listeners
-    document.querySelectorAll(".remove-item").forEach(button => {
-      button.addEventListener("click", () => {
-        const index = parseInt(button.getAttribute("data-index"));
-        removeFromCart(index);
+  // Add-to-cart buttons anywhere on the page
+  function wireAddToCartButtons() {
+    document.querySelectorAll(".add-to-cart").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id    = Number(btn.dataset.id);
+        const name  = btn.dataset.name;
+        const price = Number(btn.dataset.price);
+        const existing = window.cart.find(i => i.id === id);
+        if (existing) existing.qty += 1;
+        else window.cart.push({ id, name, price, qty: 1 });
+        saveCart();
+        updateCartUI();
       });
     });
   }
 
-  cartCount.textContent = cart.reduce((sum, item) => sum + item.qty, 0);
-  cartTotal.textContent = `$${total.toFixed(2)}`;
-}
-
-function addToCart(product) {
-  const existing = cart.find(item => item.id === product.id);
-  if (existing) {
-    existing.qty += 1;
-  } else {
-    cart.push({ ...product, qty: 1 });
-  }
-  localStorage.setItem("cart", JSON.stringify(cart));
-  updateCartUI();
-}
-
-function removeFromCart(index) {
-  cart.splice(index, 1);
-  localStorage.setItem("cart", JSON.stringify(cart));
-  updateCartUI();
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  updateCartUI();
-
-  // Handle Add to Cart buttons
-  document.querySelectorAll(".add-to-cart").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const id = parseInt(btn.getAttribute("data-id"));
-      const name = btn.getAttribute("data-name");
-      const price = parseFloat(btn.getAttribute("data-price"));
-      addToCart({ id, name, price });
-    });
+  document.addEventListener("DOMContentLoaded", () => {
+    updateCartUI();
+    wireAddToCartButtons();
+    // Keep cart available globally if other pages need it
+    window.updateCartUI = updateCartUI;
   });
-
-  // Handle Checkout Button
-  const checkoutBtn = document.getElementById("checkoutBtn");
-  if (checkoutBtn) {
-    checkoutBtn.addEventListener("click", () => {
-      fetch("/save_cart", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(cart)
-      })
-      .then(res => {
-        if (res.ok) {
-          // Optionally clear the cart
-          localStorage.removeItem("cart");
-          window.location.href = "/invoice";
-        } else {
-          alert("Failed to save cart.");
-        }
-      });
-    });
-  }
-});
+})();
 </script>
+
 
   {% endif %}
 </body>
