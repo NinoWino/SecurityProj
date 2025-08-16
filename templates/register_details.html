@@ -2,135 +2,133 @@
 {% block content %}
 
 <div class="container mt-5">
-  <div class="col-md-5 mx-auto">
+  <div class="col-md-8 col-lg-7 mx-auto">
 
-        <!-- ✅ Flash messages block -->
-    <div class="container mt-3">
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-          {% for category, message in messages %}
-            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-              {{ message }}
-              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-          {% endfor %}
+    <div class="card shadow-sm">
+      <div class="card-header bg-dark text-white text-center">
+        <h3 class="mb-0">Complete Registration</h3>
+      </div>
+      <div class="card-body">
+
+        <!-- ✅ Flash messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        {% if resent %}
+          <div class="alert alert-success mt-3 text-center">
+            A new OTP has been sent to your email.
+          </div>
         {% endif %}
-      {% endwith %}
+
+
+        <p class="text-center mb-4">
+          Email: <strong>{{ email }}</strong>
+        </p>
+
+        <form method="POST" action="{{ url_for('register_details') }}">
+          {{ form.hidden_tag() }}
+
+          <div class="mb-3">
+            {{ form.otp.label(class="form-label") }}
+            {{ form.otp(class="form-control") }}
+            {% for error in form.otp.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+            <small class="text-muted">
+              Didn’t receive code?
+              <a href="{{ url_for('resend_otp', context='register') }}">Resend OTP</a>
+            </small>
+          </div>
+
+          <div class="mb-3">
+            {{ form.username.label(class="form-label") }}
+            {{ form.username(class="form-control") }}
+            {% for error in form.username.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="mb-3">
+            {{ form.phone.label(class="form-label") }} <small class="text-muted">(Optional)</small>
+            {{ form.phone(class="form-control") }}
+            {% for error in form.phone.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="mb-3">
+            {{ form.birthdate.label(class="form-label") }}
+            {{ form.birthdate(class="form-control", type="date") }}
+            {% for error in form.birthdate.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="mb-3">
+            {{ form.security_question.label(class="form-label") }}
+            {{ form.security_question(class="form-select") }}
+          </div>
+
+          <div class="mb-3">
+            {{ form.security_answer.label(class="form-label") }}
+            {{ form.security_answer(class="form-control") }}
+            {% for error in form.security_answer.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="mb-3">
+            {{ form.password.label(class="form-label") }}
+            {{ form.password(class="form-control") }}
+            {% for error in form.password.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="mb-3">
+            {{ form.confirm_password.label(class="form-label") }}
+            {{ form.confirm_password(class="form-control") }}
+            {% for error in form.confirm_password.errors %}
+              <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="d-grid">
+            {{ form.submit(class="btn btn-dark") }}
+          </div>
+        </form>
+      </div>
     </div>
-    <!-- ✅ End flash block -->
-
-    <h3 class="text-center mb-4">Complete Registration</h3>
-    <p class="text-center">Email: {{ email }}</p>
-    <form method="POST">
-      {{ form.hidden_tag() }}
-
-      <div class="mb-3">
-        {{ form.otp.label(class="form-label") }}
-        {{ form.otp(class="form-control") }}
-        {% for error in form.otp.errors %}
-          <div class="text-danger">{{ error }}</div>
-        {% endfor %}
-      </div>
-      <p class="text-center mt-3">
-        Didn’t receive code? <a href="{{ url_for('resend_otp', context='register') }}">Resend OTP</a>
-      </p>
-
-      <div class="mb-3">
-        {{ form.username.label(class="form-label") }}
-        {{ form.username(class="form-control") }}
-        {% for error in form.username.errors %}
-          <div class="text-danger">{{ error }}</div>
-        {% endfor %}
-      </div>
-
-      <div class="mb-3">
-        {{ form.phone.label(class="form-label") }} <small class="text-muted">(Optional)</small>
-        {{ form.phone(class="form-control") }}
-        {% for error in form.phone.errors %}
-          <div class="text-danger">{{ error }}</div>
-        {% endfor %}
-      </div>
-
-
-
-      <div class="mb-3">
-        {{ form.birthdate.label(class="form-label") }}
-        {{ form.birthdate(class="form-control", type="date") }}
-        {% for error in form.birthdate.errors %}
-          <div class="text-danger">{{ error }}</div>
-        {% endfor %}
-      </div>
-
-      <div class="mb-3">
-        {{ form.security_question.label(class="form-label") }}
-        {{ form.security_question(class="form-select") }}
-      </div>
-
-      <div class="mb-3">
-        {{ form.security_answer.label(class="form-label") }}
-        {{ form.security_answer(class="form-control") }}
-        {% for error in form.security_answer.errors %}
-        <div class="text-danger">{{ error }}</div>
-      {% endfor %}
-      </div>
-
-
-
-
-      <div class="mb-3">
-        {{ form.password.label(class="form-label") }}
-        {{ form.password(class="form-control") }}
-        {% for error in form.password.errors %}
-          <div class="text-danger">{{ error }}</div>
-        {% endfor %}
-      </div>
-
-      <div class="mb-3">
-        {{ form.confirm_password.label(class="form-label") }}
-        {{ form.confirm_password(class="form-control") }}
-        {% for error in form.confirm_password.errors %}
-          <div class="text-danger">{{ error }}</div>
-        {% endfor %}
-      </div>
-
-
-
-
-      {{ form.submit(class="btn btn-dark w-100") }}
-    </form>
   </div>
 </div>
 
+<!-- Password strength + breach check -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/zxcvbn/4.4.2/zxcvbn.js"></script>
 <script>
   const passwordInput = document.querySelector('#{{ form.password.id }}');
   const feedbackBox = document.createElement('small');
+  feedbackBox.classList.add('form-text');
   passwordInput.parentNode.appendChild(feedbackBox);
 
   let debounceTimer;
-
   passwordInput.addEventListener('input', () => {
     clearTimeout(debounceTimer);
     const password = passwordInput.value;
 
-    // zxcvbn strength check
     const result = zxcvbn(password);
-    const feedback = [
-      "Very Weak 🔴",
-      "Weak 🔴",
-      "Medium ⚠️",
-      "Strong ✅",
-      "Very Strong ✅"
-    ];
-    const score = result.score;
-    feedbackBox.textContent = `Strength: ${feedback[score]}`;
-    feedbackBox.style.color = score < 3 ? 'red' : 'green';
+    const feedback = ["Very Weak 🔴","Weak 🔴","Medium ⚠️","Strong ✅","Very Strong ✅"];
+    feedbackBox.textContent = `Strength: ${feedback[result.score]}`;
+    feedbackBox.style.color = result.score < 3 ? 'red' : 'green';
 
-    // Wait before running breach check
     if (password.length > 5) {
-      debounceTimer = setTimeout(() => {
-        checkBreached(password);
-      }, 1000);
+      debounceTimer = setTimeout(() => { checkBreached(password); }, 1000);
     }
   });
 
@@ -144,7 +142,7 @@
 
     const found = text.split('\n').some(line => line.startsWith(suffix));
     if (found) {
-      feedbackBox.textContent += " | ⚠️ This password has been found in a data breach!";
+      feedbackBox.textContent += " | ⚠️ Found in a breach!";
       feedbackBox.style.color = 'red';
     }
   }
@@ -156,4 +154,5 @@
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
   }
 </script>
+
 {% endblock %}

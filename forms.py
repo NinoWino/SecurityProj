@@ -136,6 +136,7 @@ class BirthdateForm(FlaskForm):
 
 class EmailForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Email()])
+    recaptcha = RecaptchaField()
     submit = SubmitField('Next')
 
 class RegisterDetailsForm(FlaskForm):

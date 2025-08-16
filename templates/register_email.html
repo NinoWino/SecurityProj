@@ -29,6 +29,12 @@
           <div class="text-danger">{{ error }}</div>
         {% endfor %}
       </div>
+            <div class="mb-3">
+        {{ form.recaptcha }}
+        {% for error in form.recaptcha.errors %}
+          <div class="text-danger">{{ error }}</div>
+        {% endfor %}
+      </div>
 
       {{ form.submit(class="btn btn-dark w-100") }}
     </form>

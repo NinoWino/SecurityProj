@@ -100,29 +100,33 @@
   <script src="{{ url_for('static', filename='script.js') }}"></script>
   {% if current_user.is_authenticated %}
   <script>
-  (function () {
-    const idleSeconds = 1800; // 30 minutes
-    let idleTimer;
+ (function () {
+  const idleSeconds = 1800; // timeout in seconds
+  let idleTimer;
 
-    function resetTimer() {
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        localStorage.setItem("forceLogout", Date.now());
-      }, idleSeconds * 1000);
+  function forceLogout() {
+    localStorage.setItem("forceLogout", Date.now());
+    window.location = "{{ url_for('login', message='timeout') }}";
+  }
+
+  function resetTimer() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(forceLogout, idleSeconds * 1000);
+  }
+
+  ["click", "mousemove", "keydown", "scroll", "touchstart"].forEach((evt) =>
+    document.addEventListener(evt, resetTimer)
+  );
+
+  window.addEventListener("storage", function (e) {
+    if (e.key === "forceLogout") {
+      window.location = "{{ url_for('login', message='timeout') }}";
     }
+  });
 
-    ["click", "mousemove", "keydown", "scroll", "touchstart"].forEach((evt) =>
-      document.addEventListener(evt, resetTimer)
-    );
+  resetTimer();
+})();
 
-    window.addEventListener("storage", function (e) {
-      if (e.key === "forceLogout") {
-        window.location = "{{ url_for('login', message='timeout') }}";
-      }
-    });
-
-    resetTimer();
-  })();
   </script>
 
 

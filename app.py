@@ -35,10 +35,9 @@ from flask import make_response
 from io import BytesIO
 from collections import Counter
 from urllib.parse import quote_plus
-
+from flask_wtf import CSRFProtect
 import time
 from urllib.parse import unquote_plus
-from flask_wtf import CSRFProtect
 import inspect as _inspect
 import re as _re
 import ipaddress as _ipaddress

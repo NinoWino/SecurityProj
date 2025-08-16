@@ -90,6 +90,9 @@
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <form method="POST" action="{{ url_for('use_backup_code') }}">
+        <!-- ✅ Add CSRF token -->
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
         <div class="modal-header bg-primary text-white">
           <h5 class="modal-title" id="backupCodeModalLabel">Enter Backup Code</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -104,6 +107,7 @@
     </div>
   </div>
 </div>
+
 
 
 <script>

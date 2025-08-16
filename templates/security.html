@@ -71,6 +71,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <span class="badge bg-danger">Disabled</span>
   <form method="POST" action="{{ url_for('generate_backup_codes') }}" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="btn btn-outline-secondary">
       Generate Backup Codes
     </button>
@@ -91,6 +92,7 @@
         {% endif %}
       </div>
       <form method="POST" action="{{ url_for('toggle_region_lock') }}" class="d-inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-outline-{{ 'danger' if current_user.region_lock_enabled else 'success' }}">
           {{ 'Disable' if current_user.region_lock_enabled else 'Enable' }}
         </button>
@@ -126,6 +128,7 @@
 </form>
 
 <form method="POST" class="mt-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" name="remove_ip_whitelist" value="1"
             class="btn btn-outline-danger w-100">
       Remove IP Whitelist
@@ -159,6 +162,7 @@
 
     <!-- 🔻 Remove Restriction Button -->
     <form method="POST" class="mt-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" name="remove_restriction" value="1" class="btn btn-outline-danger w-100">
         Remove Restriction
       </button>
@@ -240,6 +244,7 @@
         </div>
         <div class="modal-footer">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" name="close_backup_modal" value="1" class="btn btn-primary">Done</button>
         </form>
         </div>
