@@ -2,10 +2,26 @@
 {% block content %}
 <style>
   .dashboard-container {
-    max-width: 1100px;   /* controls width */
-    margin: 2rem auto;   /* centers content with spacing */
+    max-width: 1100px;
+    margin: 2rem auto;
+  }
+  .help-dotted {
+    border-bottom: 1px dotted currentColor;
+    cursor: help;
   }
 </style>
+
+{# --- EXPLANATIONS USED BY TOOLTIPS --- #}
+{% set level_help = {
+  'Very Low': 'Typically 0–24. Benign patterns: known device, normal geo, good IP reputation.',
+  'Low': 'Typically 25–49. Minor anomalies: 1 low-weight signal (e.g., mild device drift or fresh cookie).',
+  'Moderate': 'Typically 50–74. Multiple medium-weight signals (device/geo mismatch; recent failed logins; neutral IP rep). Review advised.',
+  'High': 'Typically 75–89. High-weight indicators (VPN/Proxy/Tor, impossible travel, risky device fingerprint, bad IP reputation). Challenge or block.',
+  'Critical': 'Typically 90–100. Strongly correlated indicators across vectors (IP, device, velocity, behavior). Block and investigate.'
+} %}
+
+{# Default alert threshold if the view didn’t pass one #}
+{% set ALERT = alert_threshold|default(75) %}
 
 <div class="dashboard-container">
   <div class="card shadow-sm mt-4">
@@ -21,18 +37,34 @@
         <strong>Risk levels</strong>:
         <ul class="list-inline mb-0">
           {% for it in risk_legend %}
+            {# Pick a description from level_help; fall back to its.range #}
+            {% set tip = level_help.get(it.label, 'Range: ' ~ (it.range or '—')) %}
             <li class="list-inline-item">
-              <span class="badge
-                {% if it.label == 'Very Low' %}bg-secondary
-                {% elif it.label == 'Low' %}bg-success
-                {% elif it.label == 'Moderate' %}bg-warning text-dark
-                {% elif it.label == 'High' %}bg-danger
-                {% elif it.label == 'Critical' %}bg-danger
-                {% else %}bg-secondary{% endif %}
-              ">{{ it.label }}</span> {{ it.range }}
+              <span
+                class="badge
+                  {% if it.label == 'Very Low' %}bg-secondary
+                  {% elif it.label == 'Low' %}bg-success
+                  {% elif it.label == 'Moderate' %}bg-warning text-dark
+                  {% elif it.label in ['High','Critical'] %}bg-danger
+                  {% else %}bg-secondary{% endif %} help-dotted"
+                data-bs-toggle="tooltip"
+                data-bs-html="true"
+                data-bs-title="{{ tip|e }}<br><small>Bucket: {{ it.range }}</small>"
+              >{{ it.label }}</span>
+              <span class="text-muted"> {{ it.range }}</span>
             </li>
           {% endfor %}
         </ul>
+
+        <div class="small text-muted mt-2">
+          <span class="help-dotted"
+                data-bs-toggle="tooltip"
+                data-bs-html="true"
+                data-bs-title="An event is marked <b>Risky = Yes</b> when:<br>• Score ≥ {{ALERT}} (your configured alert threshold), <i>or</i><br>• The provider/engine explicitly flags it as risky due to rules (e.g., bad IP rep, impossible travel, device mismatch).">
+            Risky flag logic
+          </span>
+          · Current alert threshold: <strong>{{ALERT}}</strong>
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -53,31 +85,59 @@
           </thead>
           <tbody>
             {% for r in rows %}
+            {# Find the matching legend item for this row's level so we can show its bucket range #}
+            {% set bucket = (risk_legend | selectattr('label','equalto', r.level) | list) %}
+            {% set bucket_range = bucket[0].range if bucket|length else '—' %}
+            {% set level_tip = (level_help.get(r.level) or '—') ~ ' | Bucket: ' ~ bucket_range %}
+            {% set risky_tip = 'Risky = Yes if score ≥ ' ~ ALERT ~ ' or if engine/provider flagged it due to rules.' %}
+
             <tr>
               <td>{{ r.id }}</td>
               <td>{{ r.when }}</td>
               <td>{{ r.user_id }}</td>
               <td>{{ r.email }}</td>
               <td>{{ r.where }}</td>
-              <td>{{ r.score }}</td>
+              <td>
+                <span class="help-dotted"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Raw score used for bucketing.">{{ r.score }}</span>
+              </td>
               <td>
                 <span class="badge
                   {% if r.level == 'Very Low' %}bg-secondary
                   {% elif r.level == 'Low' %}bg-success
                   {% elif r.level == 'Moderate' %}bg-warning text-dark
-                  {% elif r.level == 'High' %}bg-danger
-                  {% elif r.level == 'Critical' %}bg-danger
-                  {% else %}bg-secondary{% endif %}
-                ">{{ r.level }}</span>
+                  {% elif r.level in ['High','Critical'] %}bg-danger
+                  {% else %}bg-secondary{% endif %} help-dotted"
+                  data-bs-toggle="tooltip"
+                  data-bs-html="true"
+                  data-bs-title="{{ level_tip|e }}<br><small>Why: {{ (r.reasons or '—')|e }}</small>"
+                >{{ r.level }}</span>
               </td>
-              <td>{{ 'Yes' if r.risky else 'No' }}</td>
+              <td>
+                <span class="help-dotted"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="{{ risky_tip }}">{{ 'Yes' if r.risky else 'No' }}</span>
+              </td>
               <td>{{ r.ip }}</td>
-              <td>{{ r.reasons }}</td>
+              <td>
+                <span class="help-dotted"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Primary factors contributing to the score.">{{ r.reasons }}</span>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+
+      {# Bootstrap 5 tooltip init #}
+      <script>
+        document.addEventListener('DOMContentLoaded', function () {
+          var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+          tooltipTriggerList.forEach(function (el) { new bootstrap.Tooltip(el); });
+        });
+      </script>
     </div>
   </div>
 </div>

@@ -58,7 +58,7 @@ app.config.update({
     'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
 })
 
-csrf = CSRFProtect(app)
+
 
 # Ensure upload folder exists
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'static', 'uploads')
@@ -554,8 +554,7 @@ def check_fraud_risk(email=None, ip=None, user_agent=None, phone=None):
 def log_fraud_event(user_id, where, risk, ip=None, user_agent=None, extra=None):
     """
     where: 'login' | 'google' | 'register' | 'manual'
-    Writes a JSON summary to SystemAuditLog.description (visible to admin).
-    NOTE: we intentionally do NOT include the provider here.
+    Writes a JSON summary to SystemAuditLog, and emails admins if high risk.
     """
     try:
         payload = {
@@ -579,6 +578,20 @@ def log_fraud_event(user_id, where, risk, ip=None, user_agent=None, extra=None):
         db.session.commit()
     except Exception as e:
         print("log_fraud_event failed:", e)
+
+    # --- NEW: email alert if high risk ---
+    try:
+        threshold = int(os.getenv("FRAUD_ALERT_THRESHOLD", os.getenv("FRAUD_THRESHOLD", "75")))
+    except Exception:
+        threshold = 75
+
+    try:
+        if (risk.get("score", 0) >= threshold) or risk.get("risky"):
+            the_user = db.session.get(User, user_id) if user_id else None
+            notify_fraud_alert(where=where, user=the_user, risk=risk, ip=ip, user_agent=user_agent, extra=extra)
+    except Exception as e:
+        print("notify_fraud_alert failed:", e)
+
 
 @app.route('/admin/fraud')
 @login_required
@@ -728,6 +741,12 @@ def ids_after_login_only():
         log_level="WARNING"
     )
 
+    # NEW: email admins (uses same per-rule/per-minute gating you have)
+    try:
+        notify_ids_alert(current_user, details)
+    except Exception as e:
+        print("notify_ids_alert failed:", e)
+
     # Optional block toggle (default: log-only)
     if (os.getenv("IDS_ACTION", "log").lower() == "block"
             and any(r in {"Path Traversal", "Unix Sensitive File", "Windows Sys Path"} for r in to_log)):
@@ -842,6 +861,79 @@ def admin_ids():
                            rule_explain=RULE_EXPLAIN,
                            total=len(events))
 
+# --- SECURITY ALERT EMAILS ----------------------------------------------------
+def _admin_recipients():
+    """
+    Prefer explicit list via env SECURITY_ALERTS_TO,
+    else fall back to all active admins (role_id=3).
+    """
+    raw = (os.getenv("SECURITY_ALERTS_TO") or "").strip()
+    if raw:
+        return [e.strip() for e in raw.split(",") if e.strip()]
+    try:
+        admins = User.query.filter_by(role_id=3, is_active=True).all()
+        return [u.email for u in admins if u.email]
+    except Exception:
+        return []
+
+def _send_security_alert(subject: str, body: str) -> bool:
+    rcpts = _admin_recipients()
+    if not rcpts:
+        return False
+    try:
+        msg = Message(subject=subject, recipients=rcpts, body=body)
+        mail.send(msg)
+        return True
+    except Exception as e:
+        print("[SECURITY ALERT EMAIL] send failed:", e)
+        return False
+
+def _sgt_now():
+    return datetime.utcnow().replace(tzinfo=timezone('UTC')).astimezone(timezone('Asia/Singapore')).strftime('%Y-%m-%d %H:%M:%S')
+
+def notify_fraud_alert(where: str, user=None, email: str = None, risk: dict = None,
+                       ip: str = None, user_agent: str = None, extra: dict = None):
+    risk = risk or {}
+    score   = int(risk.get('score', 0))
+    level   = risk.get('level') or _risk_level(score)
+    risky   = bool(risk.get('risky'))
+    reasons = risk.get('reason') or '—'
+    who     = f"{getattr(user, 'username', '—')} <{getattr(user, 'email', email or '—')}>"
+    uid     = getattr(user, 'id', '—')
+
+    subject = f"[ALERT] {level} fraud ({score}) on {where} for {who}"
+    body = (
+        f"When:  {_sgt_now()} SGT\n"
+        f"User:  {uid} / {who}\n"
+        f"Where: {where}\n"
+        f"IP:    {ip}\n"
+        f"UA:    {(user_agent or '')[:180]}\n"
+        f"Risk:  score={score}, level={level}, risky={risky}\n"
+        f"Reason(s): {reasons}\n"
+        f"Extra: {json.dumps(extra, ensure_ascii=False) if extra else '-'}\n"
+    )
+    _send_security_alert(subject, body)
+
+def notify_ids_alert(user, details: dict):
+    who = f"{getattr(user, 'username', '—')} <{getattr(user, 'email', '—')}>"
+    rules = ", ".join(details.get('rules', []))
+    subject = f"[ALERT] IDS: {rules or 'Rule(s)'} – {who}"
+    body = (
+        f"When:    {_sgt_now()} SGT\n"
+        f"User:    {getattr(user, 'id', '—')} / {who}\n"
+        f"Method:  {details.get('method','')}\n"
+        f"Endpoint:{details.get('endpoint','')}\n"
+        f"Path:    {details.get('path','')}\n"
+        f"Query:   {details.get('qs','')}\n"
+        f"IP:      {details.get('ip','')}\n"
+        f"UA:      {(details.get('ua','') or '')[:180]}\n"
+        f"Rules:   {rules}\n"
+    )
+    _send_security_alert(subject, body)
+# --- END SECURITY ALERT EMAILS -----------------------------------------------
+
+
+ENABLE_SECURITY_TEST = os.getenv("ENABLE_SECURITY_TEST", "0") == "1"
 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2577,7 +2669,8 @@ def download_invoice():
     pdf.ln(5)
     pdf.cell(200, 10, txt=f"Total: ${total:.2f}", ln=True)
     # Encrypt
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    pdf_bytes = bytes(pdf.output(dest='S'))  # handles bytes or bytearray
+
     reader = PdfReader(BytesIO(pdf_bytes))
     writer = PdfWriter()
     writer.append_pages_from_reader(reader)
