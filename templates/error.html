@@ -1,8 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container mt-5 text-center">
-  <h2>Oops!</h2>
-  <p>{{ message }}</p>
-  <a href="{{ url_for('home') }}" class="btn btn-primary mt-3">Back to Home</a>
+<div class="container py-5 text-center" style="max-width: 720px;">
+  <div class="display-5 fw-bold">{{ code }}</div>
+  <h1 class="mt-2">{{ title }}</h1>
+  <p class="text-muted">{{ message }}</p>
+
+  {% if req_id %}
+    <div class="small text-muted">Reference: {{ req_id }}</div>
+  {% endif %}
+
+  <div class="mt-4 d-flex gap-2 justify-content-center flex-wrap">
+    {% for btn in actions or [] %}
+      <a class="btn btn-{{ btn.variant or 'primary' }}" href="{{ btn.href }}">{{ btn.label }}</a>
+    {% endfor %}
+    <a class="btn btn-outline-secondary" href="{{ request.referrer or url_for('home') }}">Go back</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('home') }}">Home</a>
+  </div>
 </div>
 {% endblock %}

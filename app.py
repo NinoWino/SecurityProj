@@ -41,7 +41,10 @@ from urllib.parse import unquote_plus
 import inspect as _inspect
 import re as _re
 import ipaddress as _ipaddress
-
+import uuid
+from flask import render_template, request, current_app, url_for
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
+from flask_wtf.csrf import CSRFError
 
 
 
@@ -953,7 +956,98 @@ def notify_ids_alert(user, details: dict):
     )
     _send_security_alert(subject, body)
 
+# --- Graceful error rendering -------------------------------------------------
+def _render_error(code: int, title: str, message: str, actions=None):
+    """
+    Render a single friendly error page. No internals leaked.
+    """
+    req_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:8]
+    # Small, safe audit log
+    try:
+        current_app.logger.warning(
+            "HTTP %s | %s | path=%s ip=%s ua=%s ref=%s req_id=%s",
+            code, title, request.path, request.remote_addr,
+            request.headers.get("User-Agent", "")[:200],
+            request.referrer, req_id
+        )
+    except Exception:
+        pass
 
+    return (
+        render_template(
+            "error.html",
+            code=code,
+            title=title,
+            message=message,
+            req_id=req_id,
+            actions=actions or []
+        ),
+        code,
+    )
+
+
+# ---- Specific, user-friendly handlers ----
+
+@app.errorhandler(CSRFError)
+def handle_csrf(err):
+    # Common when session expired or missing token in AJAX
+    return _render_error(
+        400,
+        "Security check failed",
+        "We couldn’t verify your form/session. Please refresh the page and try again. "
+        "If the issue persists, sign in again.",
+        actions=[
+            {"label": "Sign in", "href": url_for("login"), "variant": "warning"},
+        ],
+    )
+
+@app.errorhandler(404)
+def handle_404(err):
+    return _render_error(
+        404,
+        "Page not found",
+        "The page you’re looking for doesn’t exist or may have moved."
+    )
+
+@app.errorhandler(429)  # Flask-Limiter / rate limits
+def handle_429(err):
+    retry = request.headers.get("Retry-After") or "a moment"
+    return _render_error(
+        429,
+        "Too many requests",
+        f"You’ve made too many requests. Please wait {retry} and try again."
+    )
+
+@app.errorhandler(RequestEntityTooLarge)   # 413
+def handle_413(err):
+    return _render_error(
+        413,
+        "Upload too large",
+        "That file is bigger than we allow. Try a smaller file."
+    )
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(err: HTTPException):
+    # Catch-all for other HTTP errors (401, 403, 405, etc.)
+    # Use a generic message to avoid leaking details
+    title = err.name or "Request error"
+    msg = "Something went wrong with your request."
+    # Friendlier text for a couple of common ones
+    if err.code == 403:
+        title, msg = "Access denied", "You don’t have permission to do that."
+    elif err.code == 405:
+        title, msg = "Method not allowed", "That action isn’t allowed on this page."
+    return _render_error(err.code or 400, title, msg)
+
+@app.errorhandler(Exception)
+def handle_unexpected(err):
+    # Log full traceback server-side, show a friendly 500 to users
+    current_app.logger.exception("Unhandled error on %s", request.path)
+    return _render_error(
+        500,
+        "Something went wrong",
+        "An unexpected error occurred. Please try again. If it continues, contact support."
+    )
 
 # --- END SECURITY ALERT EMAILS -----------------------------------------------
 

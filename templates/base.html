@@ -139,6 +139,9 @@
   const saveCart = () => localStorage.setItem(CART_KEY, JSON.stringify(window.cart));
 
   function updateCartUI() {
+    // (Optional, robust) always re-read latest storage
+    window.cart = JSON.parse(localStorage.getItem(CART_KEY) || "[]");
+
     const container = document.getElementById("cartItems");
     const countEl   = document.getElementById("cartCount");
     const totalEl   = document.getElementById("cartTotal");
@@ -152,21 +155,63 @@
     } else {
       window.cart.forEach((item, idx) => {
         total += item.price * item.qty;
+
         const row = document.createElement("div");
         row.className = "mb-2 d-flex justify-content-between align-items-center";
+
         row.innerHTML = `
-          <div><span>${item.name} x${item.qty}</span></div>
+          <div class="d-flex align-items-center gap-2">
+            <span>${item.name}</span>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Quantity controls">
+              <button class="btn btn-outline-secondary qty-down" data-index="${idx}" aria-label="Decrease quantity">
+                <i class="bi bi-dash"></i>
+              </button>
+              <span class="px-2" id="qty-${idx}">${item.qty}</span>
+              <button class="btn btn-outline-secondary qty-up" data-index="${idx}" aria-label="Increase quantity">
+                <i class="bi bi-plus"></i>
+              </button>
+            </div>
+          </div>
           <div>
             <strong>$${(item.price * item.qty).toFixed(2)}</strong>
-            <button class="btn btn-sm btn-outline-danger ms-2" data-remove="${idx}">&times;</button>
-          </div>`;
+            <button class="btn btn-sm btn-outline-danger ms-2 remove-item" data-index="${idx}" aria-label="Remove item">&times;</button>
+          </div>
+        `;
+
         container.appendChild(row);
       });
 
-      // remove handlers
-      container.querySelectorAll("[data-remove]").forEach(btn => {
+      // Wire quantity +/-
+      container.querySelectorAll(".qty-up").forEach(btn => {
         btn.addEventListener("click", () => {
-          const i = Number(btn.getAttribute("data-remove"));
+          const i = Number(btn.getAttribute("data-index"));
+          if (!Number.isInteger(i) || !window.cart[i]) return;
+          window.cart[i].qty += 1;
+          saveCart();
+          updateCartUI();
+        });
+      });
+
+      container.querySelectorAll(".qty-down").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const i = Number(btn.getAttribute("data-index"));
+          if (!Number.isInteger(i) || !window.cart[i]) return;
+          if (window.cart[i].qty > 1) {
+            window.cart[i].qty -= 1;
+          } else {
+            // qty would hit 0 → remove the item
+            window.cart.splice(i, 1);
+          }
+          saveCart();
+          updateCartUI();
+        });
+      });
+
+      // Wire remove (×)
+      container.querySelectorAll(".remove-item").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const i = Number(btn.getAttribute("data-index"));
+          if (!Number.isInteger(i) || !window.cart[i]) return;
           window.cart.splice(i, 1);
           saveCart();
           updateCartUI();
@@ -174,11 +219,12 @@
       });
     }
 
+    // Update badge + total
     countEl.textContent = window.cart.reduce((s, i) => s + i.qty, 0);
     totalEl.textContent = `$${total.toFixed(2)}`;
   }
 
-  // Add-to-cart buttons anywhere on the page
+  // Add-to-cart buttons anywhere on the page (unchanged)
   function wireAddToCartButtons() {
     document.querySelectorAll(".add-to-cart").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -197,7 +243,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     updateCartUI();
     wireAddToCartButtons();
-    // Keep cart available globally if other pages need it
+    // Export so other pages (like invoice_ready.html) can refresh the badge
     window.updateCartUI = updateCartUI;
   });
 })();
