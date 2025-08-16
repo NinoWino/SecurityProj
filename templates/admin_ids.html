@@ -1,105 +1,115 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .dashboard-container {
+    max-width: 1100px;   /* keeps content nicely centered */
+    margin: 2rem auto;   /* space around */
+  }
+  .sticky-top { position: sticky; top: 0; z-index: 1; }
+  .table code.small { white-space: nowrap; }
+</style>
 
-<div class="card shadow-sm mb-4">
-  <div class="card-header bg-dark text-white d-flex flex-wrap align-items-center justify-content-between">
-    <div class="d-flex align-items-center gap-2">
-      <i class="bi bi-shield-exclamation"></i>
-      <h5 class="mb-0">Intrusion Detection Events</h5>
-    </div>
-    <div class="d-flex align-items-center gap-2">
-      <span class="badge bg-warning text-dark">IDS</span>
-      <span class="badge bg-secondary">Total: {{ total }}</span>
-    </div>
-  </div>
-
-  <div class="card-body">
-    <p class="text-muted mb-3">
-      Post-login probes detected by your lightweight IDS. Hover any <span class="badge bg-warning text-dark">rule</span> to see what it means.
-    </p>
-
-    <!-- Toolbar (search removed) -->
-    <div class="row g-2 align-items-center mb-3">
-      <div class="col-12 text-md-end">
-        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-dark">
-          <i class="bi bi-arrow-left-circle me-1"></i> Back to Admin Dashboard
-        </a>
+<div class="dashboard-container">
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-dark text-white d-flex flex-wrap align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-shield-exclamation"></i>
+        <h5 class="mb-0">Intrusion Detection Events</h5>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-warning text-dark">IDS</span>
+        <span class="badge bg-secondary">Total: {{ total }}</span>
       </div>
     </div>
 
-    <div class="table-responsive" style="max-height: 65vh; overflow: auto;">
-      <table id="ids-table" class="table table-sm table-striped align-middle">
-        <thead class="table-light sticky-top">
-          <tr>
-            <th style="width: 70px;">ID</th>
-            <th style="width: 180px;">When (UTC)</th>
-            <th style="width: 240px;">Email</th>
-            <th>Rules</th>
-            <th style="width: 90px;">Method</th>
-            <th style="width: 180px;">Endpoint</th>
-            <th>Path</th>
-            <th>Query</th>
-            <th style="width: 140px;">IP</th>
-            <th>UA</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for e in events %}
-          <tr>
-            <td class="text-muted">{{ e.id }}</td>
-            <td><span class="small">{{ e.when }}</span></td>
-            <td>
-              <i class="bi bi-envelope me-1 text-secondary"></i>
-              <span class="fw-semibold">{{ e.user_email }}</span>
-            </td>
-            <td>
-              {% if e.rules %}
-                {% for r in e.rules %}
-                  {% set tip = rule_explain.get(r, "Suspicious pattern was detected.") %}
-                  <span class="badge bg-warning text-dark me-1 mb-1"
-                        data-bs-toggle="tooltip"
-                        data-bs-title="{{ tip|e }}">
-                    {{ r }}
-                  </span>
-                {% endfor %}
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if e.method %}
-                <span class="badge bg-secondary">{{ e.method }}</span>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
-            <td><code class="small">{{ e.endpoint }}</code></td>
-            <td><code class="small">{{ e.path }}</code></td>
-            <td><code class="small">{{ e.qs }}</code></td>
-            <td>
-              <span class="small">{{ e.ip }}</span>
-              {% if e.ip %}
-                <button class="btn btn-link btn-sm p-0 ms-1 copy-btn" data-copy="{{ e.ip }}" title="Copy IP">
-                  <i class="bi bi-clipboard"></i>
-                </button>
-              {% endif %}
-            </td>
-            <td>
-              <span class="text-truncate d-inline-block" style="max-width: 280px;" title="{{ e.ua }}">
-                {{ e.ua }}
-              </span>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    <div class="card-body">
+      <p class="text-muted mb-3">
+        Post-login probes detected by your lightweight IDS. Hover any <span class="badge bg-warning text-dark">rule</span> to see what it means.
+      </p>
 
-    {% if not events %}
-      <div class="alert alert-success mt-3 mb-0">
-        <i class="bi bi-check2-circle me-1"></i> No IDS events found.
+      <!-- Toolbar (search removed) -->
+      <div class="row g-2 align-items-center mb-3">
+        <div class="col-12 text-md-end">
+          <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-dark">
+            <i class="bi bi-arrow-left-circle me-1"></i> Back to Admin Dashboard
+          </a>
+        </div>
       </div>
-    {% endif %}
+
+      <div class="table-responsive" style="max-height: 65vh; overflow: auto;">
+        <table id="ids-table" class="table table-sm table-striped table-bordered align-middle">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th style="width: 70px;">ID</th>
+              <th style="width: 180px;">When (UTC)</th>
+              <th style="width: 240px;">Email</th>
+              <th>Rules</th>
+              <th style="width: 90px;">Method</th>
+              <th style="width: 180px;">Endpoint</th>
+              <th>Path</th>
+              <th>Query</th>
+              <th style="width: 140px;">IP</th>
+              <th>UA</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for e in events %}
+            <tr>
+              <td class="text-muted">{{ e.id }}</td>
+              <td><span class="small">{{ e.when }}</span></td>
+              <td>
+                <i class="bi bi-envelope me-1 text-secondary"></i>
+                <span class="fw-semibold">{{ e.user_email }}</span>
+              </td>
+              <td>
+                {% if e.rules %}
+                  {% for r in e.rules %}
+                    {% set tip = rule_explain.get(r, "Suspicious pattern was detected.") %}
+                    <span class="badge bg-warning text-dark me-1 mb-1"
+                          data-bs-toggle="tooltip"
+                          data-bs-title="{{ tip|e }}">
+                      {{ r }}
+                    </span>
+                  {% endfor %}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if e.method %}
+                  <span class="badge bg-secondary">{{ e.method }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td><code class="small">{{ e.endpoint }}</code></td>
+              <td><code class="small">{{ e.path }}</code></td>
+              <td><code class="small">{{ e.qs }}</code></td>
+              <td>
+                <span class="small">{{ e.ip }}</span>
+                {% if e.ip %}
+                  <button class="btn btn-link btn-sm p-0 ms-1 copy-btn" data-copy="{{ e.ip }}" title="Copy IP">
+                    <i class="bi bi-clipboard"></i>
+                  </button>
+                {% endif %}
+              </td>
+              <td>
+                <span class="text-truncate d-inline-block" style="max-width: 280px;" title="{{ e.ua }}">
+                  {{ e.ua }}
+                </span>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if not events %}
+        <div class="alert alert-success mt-3 mb-0">
+          <i class="bi bi-check2-circle me-1"></i> No IDS events found.
+        </div>
+      {% endif %}
+    </div>
   </div>
 </div>
 
@@ -120,10 +130,4 @@
     });
   });
 </script>
-
-<style>
-  .sticky-top { position: sticky; top: 0; z-index: 1; }
-  .table code.small { white-space: nowrap; }
-</style>
-
 {% endblock %}

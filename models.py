@@ -58,6 +58,17 @@ class User(UserMixin, db.Model):
     #force password reset
     force_password_reset = db.Column(db.Boolean, nullable=False, default=False)
 
+    @property
+    def is_master_admin(self):
+        return ROLE_HIERARCHY.get(self.role_id, 0) == ROLE_HIERARCHY[4]
+
+    @property
+    def is_admin_or_higher(self):
+        return ROLE_HIERARCHY.get(self.role_id, 0) >= ROLE_HIERARCHY[3]
+
+    @property
+    def is_staff_or_higher(self):
+        return ROLE_HIERARCHY.get(self.role_id, 0) >= ROLE_HIERARCHY[2]
 
 class LoginAuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -115,11 +126,12 @@ class KnownDevice(db.Model):
 
 
 # Role IDs correspond to hierarchy levels:
-# 1 = user (lowest), 2 = staff, 3 = admin (highest)
+# 1 = user (lowest), 2 = staff, 3 = admin ,4=master admin(highest)
 ROLE_HIERARCHY = {
     1: 1,  # user
     2: 2,  # staff
-    3: 3   # admin
+    3: 3,  # admin
+    4: 4   # master admin
 }
 
 def role_required(*allowed_role_ids):

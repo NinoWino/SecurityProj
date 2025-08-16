@@ -382,7 +382,7 @@ def _as_json(val):
         return str(val)
 @app.post('/admin/user/<int:user_id>/force-reset')
 @login_required
-@role_required(3)
+@role_required(3,4)
 def admin_force_password_reset(user_id):
     user = User.query.get_or_404(user_id)
 
@@ -595,7 +595,7 @@ def log_fraud_event(user_id, where, risk, ip=None, user_agent=None, extra=None):
 
 @app.route('/admin/fraud')
 @login_required
-@role_required(3)  # keep your guards if you had them
+@role_required(3,4)  # keep your guards if you had them
 def admin_fraud():
     logs = SystemAuditLog.query\
         .filter(SystemAuditLog.action_type.like('fraud_check_%'))\
@@ -809,7 +809,7 @@ RULE_EXPLAIN = {
 
 @app.route('/admin/ids')
 @login_required
-@role_required(3)
+@role_required(3,4)
 def admin_ids():
     rows = (db.session.query(SystemAuditLog)
             .filter(SystemAuditLog.category == "IDS")
@@ -2530,7 +2530,7 @@ def view_product(product_id):
 
 @app.route('/admin/products', methods=['GET', 'POST'])
 @login_required
-@role_required(3)
+@role_required(3,4)
 def manage_products():
     form = ProductForm()
     products = Product.query.order_by(Product.created_at.desc()).all()
@@ -2564,7 +2564,7 @@ def manage_products():
 
 @app.route('/admin/products/delete/<int:id>', methods=['POST'])
 @login_required
-@role_required(3)
+@role_required(3,4)
 def delete_product(id):
     product = Product.query.get_or_404(id)
 
@@ -2690,25 +2690,25 @@ def download_invoice():
 
 @app.route('/user')
 @login_required
-@role_required(1, 2, 3)
+@role_required(1, 2, 3,4)
 def user_dashboard():
     return render_template('user_dashboard.html')
 
 @app.route('/staff')
 @login_required
-@role_required(2, 3)
+@role_required(2, 3,4)
 def staff_dashboard():
     return render_template('staff_dashboard.html')
 
 @app.route('/admin')
 @login_required
-@role_required(3)
+@role_required(3,4)
 def admin_dashboard():
     return render_template('admin_dashboard.html')
 
 @app.route("/admin/overview")
-# @login_required
-# @role_required(3)
+@login_required
+@role_required(3,4)
 def admin_overview():
     now = datetime.utcnow()
     start_24h = now - timedelta(hours=24)
@@ -2860,7 +2860,7 @@ def admin_overview():
 
 @app.route('/admin/users')
 @login_required
-@role_required(3)
+@role_required(3,4)
 def manage_users():
     search = request.args.get('search', '').strip()
     role = request.args.get('role', '')
@@ -2878,13 +2878,17 @@ def manage_users():
 
 @app.route('/admin/user/add', methods=['GET', 'POST'])
 @login_required
-@role_required(3)
+@role_required(3,4)
 def add_user():
     if request.method == 'POST':
         username = request.form['username']
         email = request.form['email']
         password = generate_password_hash(request.form['password'])
         role_id = int(request.form['role_id'])
+
+        if role_id == 4 and not current_user.is_master_admin:
+            flash("Only a Master Admin can assign the Master Admin role.", "danger")
+            return redirect(url_for('add_user'))
 
         new_user = User(username=username, email=email, password=password, role_id=role_id)
         db.session.add(new_user)
@@ -2909,7 +2913,7 @@ def add_user():
 
 @app.route('/admin/user/<int:user_id>/edit', methods=['GET', 'POST'])
 @login_required
-@role_required(3)
+@role_required(3,4)
 def edit_user(user_id):
     user = User.query.get_or_404(user_id)
 
@@ -2920,6 +2924,15 @@ def edit_user(user_id):
             "email": user.email,
             "role_id": user.role_id
         }
+        # ✅ Only Master Admin can assign or keep role 4
+        if role_id == 4 and not current_user.is_master_admin:
+            flash("Only a Master Admin can assign the Master Admin role.", "danger")
+            return redirect(url_for('edit_user', user_id=user.id))
+
+        # ✅ (Optional) Prevent downgrading an existing Master Admin unless current user is Master Admin
+        if user.role_id == 4 and not current_user.is_master_admin and role_id != 4:
+            flash("Only a Master Admin can modify a Master Admin account.", "danger")
+            return redirect(url_for('edit_user', user_id=user.id))
 
         # ✅ Apply new values from form
         user.username = request.form['username'].strip()
@@ -2954,7 +2967,7 @@ def edit_user(user_id):
 
 @app.route('/admin/user/<int:user_id>/toggle')
 @login_required
-@role_required(3)
+@role_required(3,4)
 def toggle_user_activation(user_id):
     user = User.query.get_or_404(user_id)
     original_status = user.is_active
@@ -2990,7 +3003,7 @@ def toggle_user_activation(user_id):
 
 
 @app.route('/security_dashboard')
-@role_required(3)
+@role_required(3,4)
 @login_required
 def security_dashboard():
     # ---------------- Login Audit Logs (with filters) ----------------
