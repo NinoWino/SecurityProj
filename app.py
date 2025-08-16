@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify,g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file , abort, jsonify,g,Blueprint
 from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select,func,distinct, desc
@@ -35,8 +35,14 @@ from flask import make_response
 from io import BytesIO
 from collections import Counter
 from urllib.parse import quote_plus
+
 import time
 from urllib.parse import unquote_plus
+from flask_wtf import CSRFProtect
+import inspect as _inspect
+import re as _re
+import ipaddress as _ipaddress
+
 
 
 
@@ -52,6 +58,8 @@ app.config.update({
     'MAIL_PASSWORD': os.getenv('MAIL_PASSWORD'),
     'MAIL_DEFAULT_SENDER': f"No Reply <{os.getenv('MAIL_USERNAME')}>"
 })
+
+csrf = CSRFProtect(app)
 
 # Ensure upload folder exists
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'static', 'uploads')
@@ -313,6 +321,57 @@ def attach_request_ids():
         session['session_id'] = uuid.uuid4().hex
     g.request_id = uuid.uuid4().hex
 
+def __audit_log_safe(action, **kwargs):
+    """
+    Call your existing log_system_action(...) safely.
+    - If your helper accepts these kwargs, they'll be passed through.
+    - If not, we filter to only accepted parameters.
+    - If still incompatible, we swallow errors so logging never breaks main flows.
+    """
+    try:
+        sig = _inspect.signature(log_system_action)  # your existing helper
+        accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
+        if "action" in sig.parameters:
+            return log_system_action(action=action, **accepted)
+        else:
+            # Best-effort positional call (only if your helper expects it)
+            return log_system_action(action, *accepted.values())
+    except Exception:
+        # Never allow logging to change behavior
+        pass
+# ---------- END: AUDIT LOGGING SAFE ADAPTER ----------
+
+def __parse_ip_list__audit(raw):
+    """Parse free-form IP/CIDR text/list into a sorted unique list of strings."""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        parts = list(map(str, raw))
+    else:
+        parts = [p.strip() for p in _re.split(r'[,\n\r\t ]+', str(raw)) if p and p.strip()]
+
+    out = []
+    for p in parts:
+        try:
+            net = _ipaddress.ip_network(p, strict=False)  # accepts IP or CIDR
+            out.append(str(net))
+            continue
+        except ValueError:
+            pass
+        try:
+            ip = _ipaddress.ip_address(p)
+            out.append(str(ip))
+        except ValueError:
+            pass
+    return sorted(set(out))
+
+def __diff_lists__audit(old_list, new_list):
+    old_set, new_set = set(old_list or []), set(new_list or [])
+    added = sorted(list(new_set - old_set))
+    removed = sorted(list(old_set - new_set))
+    return added, removed
+# ---------- END: IP WHITELIST HELPERS ----------
+
 def _as_json(val):
     if val is None:
         return None
@@ -322,6 +381,39 @@ def _as_json(val):
         return json.dumps(val, ensure_ascii=False, separators=(',',':'))
     except Exception:
         return str(val)
+@app.post('/admin/user/<int:user_id>/force-reset')
+@login_required
+@role_required(3)
+def admin_force_password_reset(user_id):
+    user = User.query.get_or_404(user_id)
+
+    # Optional: prevent self-targeting
+    if user.id == current_user.id:
+        flash("You cannot force a password reset for your own account.", "warning")
+        return redirect(url_for('manage_users'))
+
+    # Flip the flag
+    previous = getattr(user, 'force_password_reset', False)
+    user.force_password_reset = True
+    db.session.commit()
+
+
+    # Audit
+    try:
+        log_system_action(
+            user_id=current_user.id,
+            action_type="Admin Force Password Reset",
+            description=f"Forced password reset for user_id={user.id} ({user.email})",
+            category="ADMIN",
+            affected_object_id=user.id,
+            changed_fields={"force_password_reset": [previous, True]}
+        )
+    except Exception as e:
+        print("audit log failed:", e)
+
+    flash(f"'{user.username}' will be prompted to change password on next login.", "success")
+    return redirect(url_for('manage_users'))
+
 
 def log_system_action(
     user_id,
@@ -779,6 +871,7 @@ def login():
 
     # Handle backup code submission (from modal)
     if request.method == 'POST' and 'backup_code' in request.form:
+        email_entered = request.form.get('email', '').strip().lower()
         code_entered = request.form['backup_code'].strip()
         stmt = select(User).filter_by(email=request.form.get('email', '').strip().lower())
         user = db.session.scalars(stmt).first()
@@ -791,7 +884,17 @@ def login():
                     codes.remove(hashed)
                     user.backup_codes = "\n".join(codes) if codes else None
                     db.session.commit()
-
+                    __audit_log_safe(
+                        "2FA_BACKUP_CODE_USED",
+                        user_id=user.id,
+                        status="success",
+                        severity="info",
+                        ip_address=ip,
+                        user_agent=user_agent,
+                        location=location_str,
+                        message="Backup code used for 2FA during login.",
+                        extra={"remaining_backup_codes": len(codes)}
+                    )
                     session['bypass_security'] = True
                     session['last_active'] = datetime.utcnow().isoformat()
                     login_user(user)
@@ -800,6 +903,17 @@ def login():
                     return redirect(url_for('profile'))
 
         flash("Invalid or used backup code.", "danger")
+        __audit_log_safe(
+            "2FA_BACKUP_CODE_FAILED",
+            user_id=getattr(user, "id", None),
+            status="failed",
+            severity="warning",
+            ip_address=ip,
+            user_agent=user_agent,
+            location=location_str,
+            message="Invalid backup code submitted.",
+            extra={"email_entered": email_entered}
+        )
         return redirect(url_for('login'))
 
     if form.validate_on_submit():
@@ -812,6 +926,13 @@ def login():
             flash("Your account has been deactivated. Please contact support.", "danger")
             return redirect(url_for('login'))
 
+            # Handle force password reset case
+        if getattr(user, 'force_password_reset', False):
+            # Mark the user who must reset, then send them to the reset screen.
+            session['expired_user_id'] = user.id
+            # (If you currently log them in here, consider skipping login until reset is done)
+            flash('Your password has expired and must be changed.', 'warning')
+            return redirect(url_for('force_password_reset'))
         if user:
             # → account lockout
             if user.is_locked:
@@ -961,6 +1082,12 @@ def login():
                         return redirect(url_for('login'))
 
                     return redirect(url_for('two_factor'))
+                # ---- Forced password reset gate (admin-triggered) ----
+                if getattr(user, 'force_password_reset', False):
+                    # Do NOT log them in yet; send them to change their password
+                    session['expired_user_id'] = user.id  # optional: reuse your existing flow var
+                    flash("Please set a new password to continue.", "warning")
+                    return redirect(url_for('change_password'))
 
                 # → successful login
                 login_user(user)
@@ -1222,6 +1349,9 @@ def change_password():
         else:
             # Hash and save the new password
             current_user.password = generate_password_hash(form.new_password.data)
+            # If this was admin-forced, clear the flag now
+            if hasattr(current_user, 'force_password_reset') and current_user.force_password_reset:
+                current_user.force_password_reset = False
             db.session.commit()
 
             log_system_action(
@@ -1721,6 +1851,17 @@ def security():
     if 'remove_ip_whitelist' in request.form:
         current_user.ip_whitelist = None
         db.session.commit()
+        __audit_log_safe(
+            "IP_WHITELIST_REMOVED",
+            user_id=current_user.id,
+            status="success",
+            severity="info",
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get("User-Agent"),
+            location=None,
+            message="User removed their IP whitelist.",
+            extra={}
+        )
         flash("IP whitelist removed.", "info")
         return redirect(url_for('security'))
 
@@ -1731,6 +1872,17 @@ def security():
             clean_ips = ",".join(sorted(set(ip.strip() for ip in raw_input.split(",") if ip.strip())))
             current_user.ip_whitelist = clean_ips or None
             db.session.commit()
+            __audit_log_safe(
+                "IP_WHITELIST_UPDATED",
+                user_id=current_user.id,
+                status="success",
+                severity="info",
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get("User-Agent"),
+                location=None,
+                message="User updated their IP whitelist.",
+                extra={"new_whitelist": clean_ips}
+            )
             flash("IP whitelist updated.", "success")
             flash(f"Currently allowed IPs: {clean_ips}", "info")
             return redirect(url_for('security'))
@@ -1810,6 +1962,18 @@ def generate_backup_codes():
 
     current_user.backup_codes = "\n".join(hashed_codes)
     db.session.commit()
+
+    __audit_log_safe(
+        "2FA_BACKUP_CODES_CREATED",
+        user_id=current_user.id,
+        status="success",
+        severity="info",
+        ip_address=request.remote_addr,
+        user_agent=request.headers.get("User-Agent"),
+        location=None,
+        message="New 2FA backup codes generated.",
+        extra={"count": len(raw_codes)}
+    )
 
     # Store raw in session temporarily to show in modal
     session['backup_codes'] = raw_codes
@@ -2178,47 +2342,85 @@ def delete_account():
 @app.route('/force_password_reset', methods=['GET', 'POST'])
 def force_password_reset():
     from forms import ForcePasswordResetForm
+    from werkzeug.security import generate_password_hash, check_password_hash
     form = ForcePasswordResetForm()
     user_id = session.get('expired_user_id')
 
+    # Only allow if we have the target user in session
     if not user_id:
         return redirect(url_for('login'))
 
     user = db.session.get(User, user_id)
+    if not user:
+        return redirect(url_for('login'))
+
     error = None
 
     if form.validate_on_submit():
-        from werkzeug.security import generate_password_hash, check_password_hash
+        old_pw = form.old_password.data or ""
+        new_pw = form.new_password.data or ""
 
-        if not check_password_hash(user.password, form.old_password.data):
+        # 1) Verify the current password (safer: always require it here)
+        if not check_password_hash(user.password, old_pw):
             error = 'Current password is incorrect.'
-        elif check_password_hash(user.password, form.new_password.data):
+        # 2) New must differ from current
+        elif check_password_hash(user.password, new_pw):
             error = 'New password must be different from the old password.'
-        elif any(check_password_hash(old, form.new_password.data) for old in user.password_history[-3:]):
-            error = 'You cannot reuse one of your last 3 passwords.'
+        # 3) Enforce "no reuse last 3"
         else:
-            new_hash = generate_password_hash(form.new_password.data)
-            user.password = new_hash
-            user.password_last_changed = datetime.utcnow()
-            user.password_history.append(new_hash)
-            if len(user.password_history) > 3:
-                user.password_history = user.password_history[-3:]
+            # IMPORTANT: compare the new password against the *history of prior hashes*
+            # Build the comparison set: last 3 old hashes + current hash
+            prior_hashes = list(user.password_history or []) + [user.password]
+            if any(check_password_hash(h, new_pw) for h in prior_hashes[-3:]):
+                error = 'You cannot reuse one of your last 3 passwords.'
+            else:
+                # 4) Update correctly: push *current* hash into history, then set new
+                prev_changed = getattr(user, 'password_last_changed', None)
+                old_hash = user.password
+                new_hash = generate_password_hash(new_pw)
 
-            db.session.commit()
-            log_system_action(
-                user_id=user.id,
-                action_type="Forced Password Reset",
-                description="User reset password after expiration.",
-                category="SECURITY",
-                changed_fields={"password": ["previous_hash", "new_hash_truncated"]}
-            )
+                hist = list(user.password_history or [])
+                hist.append(old_hash)            # store the hash we just replaced
+                user.password_history = hist[-3:]  # keep only last 3
 
-            session.pop('expired_user_id', None)
-            flash('Password updated successfully. Please log in.', 'success')
-            return redirect(url_for('login'))
+                user.password = new_hash
+                user.password_last_changed = datetime.utcnow()
+
+                # 5) Clear forced-reset flag & any lockouts that might block login
+                if hasattr(user, 'force_password_reset'):
+                    user.force_password_reset = False
+                if getattr(user, 'is_locked', False):
+                    user.is_locked = False
+                    user.failed_attempts = 0
+                    user.last_failed_login = None
+
+                db.session.commit()
+
+                # 6) Audit (no secrets)
+                try:
+                    log_system_action(
+                        user_id=user.id,
+                        action_type="Forced Password Reset",
+                        description="User reset password after expiration/force.",
+                        category="SECURITY",
+                        affected_object_id=user.id,
+                        changed_fields={
+                            "password_last_changed": {
+                                "old": str(prev_changed) if prev_changed else None,
+                                "new": str(user.password_last_changed)
+                            },
+                            "force_password_reset": ["True", "False"]  # semantic diff only
+                        }
+                    )
+                except Exception:
+                    pass  # never break the flow on logging
+
+                # 7) Clean session marker & require fresh login
+                session.pop('expired_user_id', None)
+                flash('Password updated successfully. Please log in.', 'success')
+                return redirect(url_for('login'))
 
     return render_template('force_password_reset.html', form=form, error=error)
-
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -2664,152 +2866,145 @@ def edit_user(user_id):
 def toggle_user_activation(user_id):
     user = User.query.get_or_404(user_id)
     original_status = user.is_active
+
+    # ✅ Prevent deactivating master admin
+    if getattr(user, 'is_master_admin', False):
+        flash("This account is protected and cannot be deactivated.", "danger")
+        return redirect(url_for('manage_users'))
+
+    # Toggle activation
     user.is_active = not user.is_active
     db.session.commit()
 
-    # ✅ Log the change
+    # Log the change
     log_system_action(
         user_id=current_user.id,
         action_type="Admin Toggled User Activation",
         description=f"{user.username} is now {'active' if user.is_active else 'deactivated'}",
         category="ADMIN",
         affected_object_id=user.id,
-        changed_fields={
-            "is_active": [original_status, user.is_active]
-        }
+        changed_fields={"is_active": [original_status, user.is_active]}
     )
+
+    # ✅ If the current admin deactivated themselves → force logout
+    if user.id == current_user.id and not user.is_active:
+        logout_user()
+        session.clear()
+        flash("You deactivated your own account. You have been logged out. Another admin must reactivate your account to regain access.", "warning")
+        return redirect(url_for('login'))
 
     flash(f"{user.username} is now {'active' if user.is_active else 'deactivated'}.", "info")
     return redirect(url_for('manage_users'))
 
+
 @app.route('/security_dashboard')
 @role_required(3)
+@login_required
 def security_dashboard():
-   # --- LOGIN AUDIT LOG FILTERS ---
-   login_query = LoginAuditLog.query
-   email = request.args.get('email')
-   login_user_id = request.args.get('login_user_id')
-   success = request.args.get('success')
-   location = request.args.get('location')
-   ip_address = request.args.get('ip')
-   user_agent = request.args.get('user_agent')
-   login_start_date = request.args.get('login_start_date')
-   login_end_date = request.args.get('login_end_date')
+    # ---------------- Login Audit Logs (with filters) ----------------
+    login_query = LoginAuditLog.query
 
+    email = request.args.get('email', '').strip()
+    if email:
+        login_query = login_query.filter(LoginAuditLog.email == email)
 
-   if email:
-       login_query = login_query.filter(LoginAuditLog.email == email)
+    login_user_id = request.args.get('login_user_id', '').strip()
+    if login_user_id:
+        login_query = login_query.filter(LoginAuditLog.user_id == login_user_id)
 
+    success = request.args.get('success', '').strip()
+    if success in ('0', '1'):
+        login_query = login_query.filter(LoginAuditLog.success == (success == '1'))
 
-   if login_user_id and login_user_id.isdigit():
-       login_query = login_query.filter(LoginAuditLog.user_id == int(login_user_id))
+    location = request.args.get('location', '').strip()
+    if location:
+        login_query = login_query.filter(LoginAuditLog.location == location)
 
+    logs = login_query.order_by(LoginAuditLog.timestamp.desc()).limit(50).all()
 
-   if success in ['0', '1']:
-       login_query = login_query.filter(LoginAuditLog.success == (success == '1'))
+    # ---------------- Known Devices (no filters in UI) ----------------
+    devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(50).all()
 
+    # ---------------- System Audit Logs (with filters) ----------------
+    audit_query = SystemAuditLog.query
 
-   if location:
-       login_query = login_query.filter(LoginAuditLog.location == location)
+    user_id = request.args.get('user_id', '').strip()
+    if user_id:
+        audit_query = audit_query.filter(SystemAuditLog.user_id == user_id)
 
+    action_type = request.args.get('action_type', '').strip()
+    if action_type:
+        audit_query = audit_query.filter(SystemAuditLog.action_type == action_type)
 
-   if ip_address:
-       login_query = login_query.filter(LoginAuditLog.ip_address.like(f"%{ip_address}%"))
+    category = request.args.get('category', '').strip()
+    if category:
+        audit_query = audit_query.filter(SystemAuditLog.category == category)
 
+    log_level = request.args.get('log_level', '').strip()
+    if log_level:
+        audit_query = audit_query.filter(SystemAuditLog.log_level == log_level)
 
-   if user_agent:
-       login_query = login_query.filter(LoginAuditLog.user_agent.ilike(f"%{user_agent}%"))
+    ip = request.args.get('ip', '').strip()
+    if ip:
+        audit_query = audit_query.filter(SystemAuditLog.ip_address.contains(ip))
 
+    endpoint = request.args.get('endpoint', '').strip()
+    if endpoint:
+        audit_query = audit_query.filter(SystemAuditLog.endpoint.contains(endpoint))
 
-   if login_start_date:
-       try:
-           start_dt = datetime.strptime(login_start_date, "%Y-%m-%d")
-           login_query = login_query.filter(LoginAuditLog.timestamp >= start_dt)
-       except ValueError as e:
-           print("Start date parsing error:", e)
+    # --- Date range (FIXED) ---
+    start_date = request.args.get('start_date', '').strip()
+    end_date = request.args.get('end_date', '').strip()
 
+    start_dt, end_dt = None, None  # ensure defined for debugging
 
-   if login_end_date:
-       try:
-           end_dt = datetime.strptime(login_end_date, "%Y-%m-%d") + timedelta(days=1)
-           login_query = login_query.filter(LoginAuditLog.timestamp < end_dt)
-       except ValueError as e:
-           print("End date parsing error:", e)
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            audit_query = audit_query.filter(SystemAuditLog.timestamp >= start_dt)
+        except ValueError:
+            # Invalid date format; ignore
+            pass
 
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            # include full end date up to 23:59:59
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            audit_query = audit_query.filter(SystemAuditLog.timestamp <= end_dt)
+        except ValueError:
+            # Invalid date format; ignore
+            pass
 
-   login_logs = login_query.order_by(LoginAuditLog.timestamp.desc()).limit(100).all()
+    audit_logs = audit_query.order_by(SystemAuditLog.timestamp.desc()).limit(100).all()
 
+    # ---------------- Dropdown Data (for your template) ----------------
+    # Distinct values for Login Logs filters
+    emails = [e for (e,) in db.session.query(LoginAuditLog.email).distinct()]
+    locations = [loc for (loc,) in db.session.query(LoginAuditLog.location).distinct()]
 
-   # --- SYSTEM AUDIT LOG FILTERS ---
-   audit_query = SystemAuditLog.query
+    # User IDs: use a union so the single 'user_ids' list supports both sections
+    user_ids_login = {uid for (uid,) in db.session.query(LoginAuditLog.user_id).distinct() if uid is not None}
+    user_ids_audit = {uid for (uid,) in db.session.query(SystemAuditLog.user_id).distinct() if uid is not None}
+    user_ids = sorted(user_ids_login.union(user_ids_audit))
 
+    # Distinct values for System Audit Log filters
+    action_types = [a for (a,) in db.session.query(SystemAuditLog.action_type).distinct()]
+    categories = [c for (c,) in db.session.query(SystemAuditLog.category).distinct()]
 
-   user_id = request.args.get('user_id')
-   action_type = request.args.get('action_type')
-   category = request.args.get('category')
-   log_level = request.args.get('log_level')
-   audit_start_date = request.args.get('audit_start_date')
-   audit_end_date = request.args.get('audit_end_date')
-
-
-   if user_id and user_id.isdigit():
-       audit_query = audit_query.filter(SystemAuditLog.user_id == int(user_id))
-
-
-   if action_type:
-       audit_query = audit_query.filter_by(action_type=action_type)
-
-
-   if category:
-       audit_query = audit_query.filter_by(category=category)
-
-
-   if log_level:
-       audit_query = audit_query.filter_by(log_level=log_level)
-
-
-   if audit_start_date:
-       try:
-           audit_start_dt = datetime.strptime(audit_start_date, "%Y-%m-%d")
-           audit_query = audit_query.filter(SystemAuditLog.timestamp >= audit_start_dt)
-       except ValueError as e:
-           print("Audit start date error:", e)
-
-
-   if audit_end_date:
-       try:
-           audit_end_dt = datetime.strptime(audit_end_date, "%Y-%m-%d") + timedelta(days=1)
-           audit_query = audit_query.filter(SystemAuditLog.timestamp < audit_end_dt)
-       except ValueError as e:
-           print("Audit end date error:", e)
-
-
-   audit_logs = audit_query.order_by(SystemAuditLog.timestamp.desc()).limit(200).all()
-
-
-   # --- DROPDOWNS ---
-   user_ids = [user.id for user in db.session.query(User.id).distinct().order_by(User.id).all()]
-   emails = [row.email for row in db.session.query(LoginAuditLog.email).distinct() if row.email]
-   locations = [row.location for row in db.session.query(LoginAuditLog.location).distinct() if row.location]
-   action_types = [row.action_type for row in db.session.query(SystemAuditLog.action_type).distinct() if row.action_type]
-   categories = [row.category for row in db.session.query(SystemAuditLog.category).distinct() if row.category]
-
-
-   # --- KNOWN DEVICES ---
-   devices = KnownDevice.query.order_by(KnownDevice.last_seen.desc()).limit(100).all()
-
-
-   return render_template(
-       'security_dashboard.html',
-       logs=login_logs,
-       emails=emails,
-       locations=locations,
-       devices=devices,
-       audit_logs=audit_logs,
-       action_types=action_types,
-       categories=categories,
-       user_ids=user_ids,
-   )
+    return render_template(
+        'security_dashboard.html',
+        # Tables
+        logs=logs,
+        devices=devices,
+        audit_logs=audit_logs,
+        # Dropdown data
+        emails=emails,
+        user_ids=user_ids,
+        action_types=action_types,
+        categories=categories,
+        locations=locations
+    )
 
 @app.route('/contact')
 def contact():
@@ -2819,6 +3014,18 @@ def contact():
 def forbidden(error):
     return render_template('403.html'), 403
 
+def detect_changes(obj, original_data, fields):
+    """
+    Compare original_data (dict of field -> old_value) to current values on obj.
+    Returns a dict of changed fields: field_name -> [old, new]
+    """
+    changes = {}
+    for field in fields:
+        old = original_data.get(field)
+        new = getattr(obj, field, None)
+        if old != new:
+            changes[field] = [old, new]
+    return changes
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
