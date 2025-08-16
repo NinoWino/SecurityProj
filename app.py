@@ -866,7 +866,8 @@ def auth_callback():
         db.session.commit()
 
     # ── Region Lock (unchanged) ─────────────────────────────────
-    country = get_location_data().get('country')
+    location = get_location_data()
+    current_country = location.get('country')
     if user.region_lock_enabled and not session.get('bypass_security'):
         if user.last_country and user.last_country != current_country:
             session['backup_user_id'] = user.id  # Store for modal use
@@ -876,7 +877,7 @@ def auth_callback():
             ), "danger")
             return redirect(url_for('login'))
         if not user.last_country:
-            user.last_country = country
+            user.last_country = current_country
             db.session.commit()
             # ✅ Log the login
         log_system_action(

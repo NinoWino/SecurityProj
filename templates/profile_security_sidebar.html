@@ -5,16 +5,27 @@
     <!-- Sidebar Navigation -->
     <div class="col-md-3 mb-4">
       <div class="list-group">
-        <a href="{{ url_for('profile') }}" class="list-group-item list-group-item-action {% if request.endpoint == 'profile' %}active{% endif %}">
-          Profile
-        </a>
-        <a href="{{ url_for('security') }}" class="list-group-item list-group-item-action {% if request.endpoint == 'security' %}active{% endif %}">
-          Security
-        </a>
-        <a href="{{ url_for('logout') }}" class="list-group-item list-group-item-action text-danger">
-          Logout
-        </a>
-      </div>
+  <a href="{{ url_for('profile') }}"
+     class="list-group-item list-group-item-action {% if request.endpoint == 'profile' %}active{% endif %}">
+    Profile
+  </a>
+  <a href="{{ url_for('security') }}"
+     class="list-group-item list-group-item-action {% if request.endpoint == 'security' %}active{% endif %}">
+    Security
+  </a>
+
+  {% if current_user.role_id == 3 %}
+    <a href="{{ url_for('admin_dashboard') }}"
+       class="list-group-item list-group-item-action {% if request.endpoint == 'admin_dashboard' %}active{% endif %}">
+      Admin
+    </a>
+  {% endif %}
+
+  <a href="{{ url_for('logout') }}" class="list-group-item list-group-item-action text-danger">
+    Logout
+  </a>
+</div>
+
     </div>
 
     <!-- Main Content -->
