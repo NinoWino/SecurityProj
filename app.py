@@ -2746,6 +2746,18 @@ def contact():
 def forbidden(error):
     return render_template('403.html'), 403
 
+def detect_changes(obj, original_data, fields):
+    """
+    Compare original_data (dict of field -> old_value) to current values on obj.
+    Returns a dict of changed fields: field_name -> [old, new]
+    """
+    changes = {}
+    for field in fields:
+        old = original_data.get(field)
+        new = getattr(obj, field, None)
+        if old != new:
+            changes[field] = [old, new]
+    return changes
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
