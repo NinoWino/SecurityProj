@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Intrusion Detection Events</h2>
+<table class="table table-sm table-striped align-middle">
+  <thead>
+    <tr>
+      <th>ID</th><th>When</th><th>User</th><th>Rules</th>
+      <th>Method</th><th>Endpoint</th><th>Path</th><th>Query</th><th>IP</th><th>UA</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for e in events %}
+    <tr>
+      <td>{{ e.id }}</td>
+      <td>{{ e.when }}</td>
+      <td>{{ e.user_id }}</td>
+      <td>
+        {% for r in e.rules %}
+          <span class="badge bg-warning text-dark">{{ r }}</span>
+        {% endfor %}
+      </td>
+      <td>{{ e.method }}</td>
+      <td>{{ e.endpoint }}</td>
+      <td><code>{{ e.path }}</code></td>
+      <td><code>{{ e.qs }}</code></td>
+      <td>{{ e.ip }}</td>
+      <td title="{{ e.ua }}">{{ e.ua }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -35,7 +35,8 @@ from flask import make_response
 from io import BytesIO
 from collections import Counter
 from urllib.parse import quote_plus
-
+import time
+from urllib.parse import unquote_plus
 
 
 
@@ -542,6 +543,164 @@ def admin_fraud():
     return render_template('admin_fraud.html', rows=rows, risk_legend=risk_legend)
 
 
+# ------- Simple post-login IDS (detect & log only) -------
+# Runs only AFTER the user is authenticated. Does not run during/ before login.
+IDS_IGNORED_ENDPOINTS = {"static"}  # extend if needed
+
+# Precompiled patterns for common probes
+_IDS_PATTERNS = [
+    ("Path Traversal",      re.compile(r"(\.\./|\.\.\\|%2e%2e%2f|%2e%2e\\|%252e%252e%252f)", re.I)),
+    ("Windows Sys Path",    re.compile(r"[A-Za-z]:\\(?:windows|winnt|system32)\\", re.I)),
+    ("Unix Sensitive File", re.compile(r"/(etc/passwd|proc/self/environ|shadow|var/log)", re.I)),
+    ("SQLi Tautology",      re.compile(r"(['\"])\s*or\s*1=1", re.I)),
+    ("SQLi UNION",          re.compile(r"union\s+select", re.I)),
+    ("SQLi Time",           re.compile(r"(?:sleep\s*\(|benchmark\s*\()", re.I)),
+    ("XSS Probe",           re.compile(r"<\s*script\b|onerror\s*=|onload\s*=", re.I)),
+    # Match separators like ;, |, ||, &&, backtick, and $()
+    ("Command Injection",   re.compile(r"(?:;|\|\||\||&&|`|\$\([^)]*\))")),
+    ("File/Wrap Scheme",    re.compile(r"(?:php://|file://|gopher://|dict://)", re.I)),
+    ("SSRF Local",          re.compile(r"(?:(?:https?|ftp):\/\/)?(?:127\.0\.0\.1|localhost|169\.254\.\d+\.\d+)", re.I)),
+    ("Null Byte",           re.compile(r"%00", re.I)),
+]
+
+def _ids_should_log(rule_name: str) -> bool:
+    """
+    Per-session rate limit so we don't spam logs.
+    Logs at most once per rule per minute per session.
+    """
+    now = time.time()
+    last = session.get('ids_last', {})
+    last_ts = float(last.get(rule_name, 0) or 0)
+    if now - last_ts >= 60:  # 1 min per rule
+        last[rule_name] = now
+        session['ids_last'] = last
+        return True
+    return False
+
+@app.before_request
+def ids_after_login_only():
+    # Only run if the user is already authenticated (not during pre-auth flows)
+    if not current_user.is_authenticated:
+        return
+    if request.endpoint in IDS_IGNORED_ENDPOINTS:
+        return
+
+    # Build a "surface" string to scan: decoded path + query + form keys/values
+    path_dec = unquote_plus(request.path or "")
+    qs_dec = unquote_plus((request.query_string or b"").decode('latin1', 'ignore'))
+    # Combine GET/POST params safely (strings only, clipped)
+    try:
+        kv_bits = []
+        for k, vals in request.values.lists():
+            v = "|".join(map(str, vals))[:200]
+            kv_bits.append(f"{k}={v}")
+        params_dec = " ".join(kv_bits)
+    except Exception:
+        params_dec = ""
+    surface = " ".join([path_dec, qs_dec, params_dec]).lower()
+
+    tripped = []
+
+    # length-based heuristic
+    if len(path_dec) > 300 or len(qs_dec) > 1024:
+        tripped.append("Overlong Path/Query")
+
+    # regex-based heuristics
+    for name, rx in _IDS_PATTERNS:
+        if rx.search(surface):
+            tripped.append(name)
+
+    if not tripped:
+        return
+
+    # rate-limit per rule; keep only those we are allowed to log now
+    to_log = [r for r in tripped if _ids_should_log(r)]
+    if not to_log:
+        return
+
+    # Write to SystemAuditLog via your helper (category=IDS, level=WARNING)
+    details = {
+        "rules": to_log,
+        "path": path_dec[:300],
+        "qs": qs_dec[:300],
+        "method": request.method,
+        "endpoint": request.endpoint,
+        "ip": request.headers.get('X-Forwarded-For', request.remote_addr),
+        "ua": (request.headers.get('User-Agent', '') or '')[:160],
+        "ts": datetime.utcnow().isoformat() + "Z"
+    }
+    log_system_action(
+        user_id=current_user.id,
+        action_type="IDS Trigger",
+        description=json.dumps(details, separators=(',', ':')),
+        category="IDS",
+        log_level="WARNING"
+    )
+
+    # Optional block toggle (default: log-only)
+    if (os.getenv("IDS_ACTION", "log").lower() == "block"
+            and any(r in {"Path Traversal", "Unix Sensitive File", "Windows Sys Path"} for r in to_log)):
+        abort(403)
+
+
+@app.after_request
+def ids_behavior_anomaly(resp):
+    """
+    Simple behavioral signal: many 4xx after login within 10 minutes.
+    Useful to spot fuzzing/bruteforcing of routes *after* authentication.
+    """
+    try:
+        if current_user.is_authenticated and 400 <= resp.status_code < 500:
+            win = session.get('ids_4xx', {"count": 0, "first": datetime.utcnow().isoformat()})
+            first = datetime.fromisoformat(win["first"])
+            if datetime.utcnow() - first > timedelta(minutes=10):
+                win = {"count": 0, "first": datetime.utcnow().isoformat()}
+            win["count"] += 1
+            session['ids_4xx'] = win
+
+            if win["count"] in (5, 10):  # log at 5 and 10 hits
+                log_system_action(
+                    user_id=current_user.id,
+                    action_type="IDS Anomaly: Many 4xx",
+                    description=json.dumps({
+                        "count_10min": win["count"],
+                        "first": win["first"],
+                        "last": datetime.utcnow().isoformat() + "Z"
+                    }, separators=(',', ':')),
+                    category="IDS",
+                    log_level="WARNING"
+                )
+    except Exception as e:
+        print("IDS after_request error:", e)
+    return resp
+# ------- end IDS -------
+
+@app.route('/admin/ids')
+@login_required
+@role_required(3)
+def admin_ids():
+    rows = SystemAuditLog.query.filter_by(category="IDS")\
+        .order_by(SystemAuditLog.id.desc()).limit(200).all()
+
+    events = []
+    for r in rows:
+        try:
+            d = json.loads(r.description or "{}")
+        except Exception:
+            d = {}
+        events.append({
+            "id": r.id,
+            "when": r.timestamp,
+            "user_id": r.user_id,
+            "endpoint": d.get("endpoint") or r.endpoint,
+            "method": d.get("method") or r.http_method,
+            "path": d.get("path") or "",
+            "qs": d.get("qs") or "",
+            "rules": d.get("rules") or [],
+            "ip": d.get("ip") or r.ip_address,
+            "ua": (d.get("ua") or r.user_agent or "")[:120],
+        })
+    return render_template('admin_ids.html', events=events)
 
 
 
