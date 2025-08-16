@@ -131,6 +131,17 @@ limiter = Limiter(
     default_limits=[]  # so we control manually
 )
 
+# --- Password expiry window (defaults to 3 minutes for testing) ---
+PASSWORD_MAX_AGE = timedelta(minutes=int(os.getenv('PASSWORD_MAX_AGE_MINUTES', '30')))
+
+def password_is_expired(user) -> bool:
+    ref = getattr(user, 'password_last_changed', None) or getattr(user, 'created_at', None)
+    if not ref:
+        return False
+    return (datetime.utcnow() - ref) >= PASSWORD_MAX_AGE
+
+
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -212,6 +223,17 @@ def check_session_timeout():
                 session.clear()
                 return redirect(url_for('login', message='timeout'))
         session['last_active'] = now.isoformat()
+        # --- Enforce password expiry during active sessions ---
+        ref = getattr(current_user, 'password_last_changed', None) or getattr(current_user, 'created_at', None)
+        if ref and (datetime.utcnow() - ref) >= PASSWORD_MAX_AGE:
+            uid = current_user.id
+            # log out but keep a minimal session so we can drive the reset flow
+            logout_user()
+            for k in ['last_active', 'pre_2fa_user_id', 'login_otp_attempts']:
+                session.pop(k, None)
+            session['expired_user_id'] = uid
+            flash('Your password has expired and must be changed.', 'warning')
+            return redirect(url_for('force_password_reset'))
 
 def send_login_alert_email(user):
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
@@ -1018,7 +1040,7 @@ def login():
             return redirect(url_for('login'))
 
             # Handle force password reset case
-        if getattr(user, 'force_password_reset', False):
+        if getattr(user, 'force_password_reset', False) or password_is_expired(user):
             # Mark the user who must reset, then send them to the reset screen.
             session['expired_user_id'] = user.id
             # (If you currently log them in here, consider skipping login until reset is done)
@@ -1174,7 +1196,7 @@ def login():
 
                     return redirect(url_for('two_factor'))
                 # ---- Forced password reset gate (admin-triggered) ----
-                if getattr(user, 'force_password_reset', False):
+                if getattr(user, 'force_password_reset', False) or password_is_expired(user):
                     # Do NOT log them in yet; send them to change their password
                     session['expired_user_id'] = user.id  # optional: reuse your existing flow var
                     flash("Please set a new password to continue.", "warning")
@@ -1438,8 +1460,16 @@ def change_password():
         elif check_password_hash(current_user.password, form.new_password.data):
             error = 'New password must be different from the old password.'
         else:
+            old_hash = current_user.password  # NEW
             # Hash and save the new password
             current_user.password = generate_password_hash(form.new_password.data)
+            current_user.password_last_changed = datetime.utcnow()  # NEW
+
+            # (Optional) keep last 3 hashes like your force-reset flow
+            hist = list(current_user.password_history or [])  # NEW
+            hist.append(old_hash)  # NEW
+            current_user.password_history = hist[-3:]  # NEW
+
             # If this was admin-forced, clear the flag now
             if hasattr(current_user, 'force_password_reset') and current_user.force_password_reset:
                 current_user.force_password_reset = False
