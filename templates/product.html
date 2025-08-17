@@ -1,18 +1,37 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container mt-5">
-  <h2 class="mb-4">Our Products</h2>
-  <div class="row">
+<div class="container py-5">
+  <div class="d-flex justify-content-between align-items-end mb-4">
+    <h2 class="mb-0">Our Products</h2>
+    <span class="text-muted">{{ products|length }} items</span>
+  </div>
+
+  <div class="row g-4">
     {% for product in products %}
-    <div class="col-md-4 mb-4">
-      <div class="card h-100">
-{% if product.image_filename %}
-        <img src="{{ url_for('static', filename='uploads/' + product.image_filename) }}" width="120">
+    <div class="col-12 col-sm-6 col-lg-4">
+      <div class="card h-100 shadow-sm border-0">
+        {% if product.image_filename %}
+          <img
+            src="{{ url_for('static', filename='uploads/' ~ product.image_filename) }}"
+            alt="{{ product.name }}"
+            class="card-img-top"
+            style="aspect-ratio: 4/3; object-fit: cover;"
+            loading="lazy">
+        {% else %}
+          <div class="card-img-top bg-light d-flex align-items-center justify-content-center"
+               style="aspect-ratio: 4/3;">
+            <span class="text-muted small">No image</span>
+          </div>
         {% endif %}
-        <div class="card-body">
-          <h5 class="card-title">{{ product.name }}</h5>
-          <p class="card-text">${{ product.price }}</p>
-          <a href="{{ url_for('view_product', product_id=product.id) }}" class="btn btn-primary">View</a>
+
+        <div class="card-body d-flex flex-column">
+          <h5 class="card-title mb-1 text-truncate" title="{{ product.name }}">{{ product.name }}</h5>
+          <div class="mb-3 fw-semibold">${{ '%.2f'|format(product.price) }}</div>
+          <div class="mt-auto">
+            <a href="{{ url_for('view_product', product_id=product.id) }}" class="btn btn-primary w-100">
+              View
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -20,3 +39,4 @@
   </div>
 </div>
 {% endblock %}
+\

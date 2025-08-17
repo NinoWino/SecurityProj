@@ -2,32 +2,183 @@
 {% block content %}
 <style>
   .truncate {
-    max-width: 220px;
+    max-width: 260px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .dashboard-container {
-    max-width: 1100px;   /* keeps it from stretching full screen */
-    margin: 2rem auto;   /* centers it with space above/below */
+    max-width: 1200px;
+    margin: 2rem auto;
   }
+  .section-title {
+    border-left: 5px solid #0d6efd;
+    padding-left: 10px;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    font-weight: 600;
+    color: #333;
+  }
+  .filter-form {
+    background: #fff;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    border: 1px solid #ddd;
+  }
+  .table thead th { white-space: nowrap; }
+  .metric-card h2 { margin: 0; }
+  .subtle { color: #6c757d; font-size: .9rem; }
 </style>
 
 <div class="dashboard-container">
   <div class="card shadow-sm">
     <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-      <h2 class="mb-0">Security Dashboard</h2>
+      <h2 class="mb-0">🔐 Security Dashboard</h2>
       <div>
-        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-light">← Back to Admin Dashboard</a>
-        <a href="{{ url_for('logout') }}" class="btn btn-sm btn-secondary">Logout</a>
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-light me-2">← Back</a>
+        <a href="{{ url_for('logout') }}" class="btn btn-sm btn-warning">Logout</a>
       </div>
     </div>
 
     <div class="card-body bg-light">
-      <!-- Login Audit Log Filters -->
-      <h4 class="mb-3">Login Audit Logs</h4>
-      <form method="get" class="row g-3 mb-4">
+
+      {# ================= SUMMARY METRICS (computed in Jinja) ================= #}
+      {% set total_logins = logs|length %}
+      {% set success_count = logs|selectattr('success')|list|length %}
+      {% set fail_count = total_logins - success_count %}
+      {% set success_rate = (success_count / total_logins * 100) if total_logins > 0 else 0 %}
+      {% set device_count = devices|length %}
+      {% set critical_events = audit_logs|selectattr('log_level','equalto','CRITICAL')|list|length %}
+
+      <div class="row g-3 mb-4">
         <div class="col-md-3">
+          <div class="card metric-card border-primary h-100">
+            <div class="card-body">
+              <div class="subtle">Total Login Attempts (current view)</div>
+              <h2 class="text-primary">{{ total_logins }}</h2>
+              <div class="subtle">Success: {{ success_count }} · Failed: {{ fail_count }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card metric-card border-success h-100">
+            <div class="card-body">
+              <div class="subtle">Success Rate</div>
+              <h2 class="text-success">{{ '%.0f'|format(success_rate) }}%</h2>
+              <div class="progress" role="progressbar" aria-valuenow="{{ success_rate|int }}" aria-valuemin="0" aria-valuemax="100">
+                <div class="progress-bar" style="width: {{ success_rate }}%"></div>
+              </div>
+              <div class="subtle mt-1">Higher is better</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card metric-card border-info h-100">
+            <div class="card-body">
+              <div class="subtle">Known Devices (rows)</div>
+              <h2 class="text-info">{{ device_count }}</h2>
+              <div class="subtle">Unique users & devices can be added later</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card metric-card border-danger h-100">
+            <div class="card-body">
+              <div class="subtle">Critical Events</div>
+              <h2 class="text-danger">{{ critical_events }}</h2>
+              <div class="subtle">From System Audit Logs</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ================= INSIGHT PANELS: RECENT FAILURES & CRITICAL EVENTS ================= #}
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100">
+            <div class="card-header bg-white">
+              <strong>⚠️ Recent Failed Logins</strong> <span class="subtle">(last 5 in current view)</span>
+            </div>
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Time</th>
+                      <th>Email</th>
+                      <th>IP</th>
+                      <th>Location</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% set ns = namespace(count=0) %}
+                    {% for log in logs %}
+                      {% if not log.success and ns.count < 5 %}
+                        {% set ns.count = ns.count + 1 %}
+                        <tr>
+                          <td>{{ log.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+                          <td class="truncate">{{ log.email }}</td>
+                          <td>{{ log.ip_address }}</td>
+                          <td class="truncate">{{ log.location or 'Unknown' }}</td>
+                        </tr>
+                      {% endif %}
+                    {% endfor %}
+                    {% if ns.count == 0 %}
+                      <tr><td colspan="4" class="text-center text-muted">No failed attempts in current view.</td></tr>
+                    {% endif %}
+                  </tbody>
+                </table>
+              </div>
+              <div class="subtle mt-2">Tip: Filter by <em>Status = Failure</em> above for investigation.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-6">
+          <div class="card h-100">
+            <div class="card-header bg-white">
+              <strong>🛑 Recent Critical Events</strong> <span class="subtle">(top 5)</span>
+            </div>
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Time</th>
+                      <th>Action</th>
+                      <th>Endpoint</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% set shown = namespace(n=0) %}
+                    {% for log in audit_logs %}
+                      {% if log.log_level == 'CRITICAL' and shown.n < 5 %}
+                        {% set shown.n = shown.n + 1 %}
+                        <tr>
+                          <td>{{ log.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+                          <td class="truncate">{{ log.action_type }}</td>
+                          <td class="truncate">{{ log.endpoint }}</td>
+                        </tr>
+                      {% endif %}
+                    {% endfor %}
+                    {% if shown.n == 0 %}
+                      <tr><td colspan="3" class="text-center text-muted">No critical events in current view.</td></tr>
+                    {% endif %}
+                  </tbody>
+                </table>
+              </div>
+              <div class="subtle mt-2">Tip: Use <em>Level = CRITICAL</em> and date range filters to focus.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== Login Audit Logs (Filters + Table) ===================== -->
+      <h4 class="section-title">Login Audit Logs</h4>
+
+      <form method="get" class="row g-3 mb-4 filter-form">
+        <div class="col-md-3">
+          <label class="form-label">Email</label>
           <select class="form-select" name="email">
             <option value="">All Emails</option>
             {% for email in emails %}
@@ -36,6 +187,7 @@
           </select>
         </div>
         <div class="col-md-2">
+          <label class="form-label">User ID</label>
           <select class="form-select" name="login_user_id">
             <option value="">All User IDs</option>
             {% for uid in user_ids %}
@@ -44,13 +196,15 @@
           </select>
         </div>
         <div class="col-md-2">
+          <label class="form-label">Status</label>
           <select class="form-select" name="success">
             <option value="">All</option>
-            <option value="1" {% if request.args.get('success') == '1' %}selected{% endif %}>Success</option>
-            <option value="0" {% if request.args.get('success') == '0' %}selected{% endif %}>Failure</option>
+            <option value="1" {% if request.args.get('success') == '1' %}selected{% endif %}>✅ Success</option>
+            <option value="0" {% if request.args.get('success') == '0' %}selected{% endif %}>❌ Failure</option>
           </select>
         </div>
         <div class="col-md-3">
+          <label class="form-label">Location</label>
           <select class="form-select" name="location">
             <option value="">All Locations</option>
             {% for location in locations %}
@@ -58,22 +212,20 @@
             {% endfor %}
           </select>
         </div>
-        <div class="col-md-2 d-flex">
+        <div class="col-md-2 d-flex align-items-end">
           <button type="submit" class="btn btn-outline-primary me-2 w-100">Filter</button>
           <a href="{{ url_for('security_dashboard') }}" class="btn btn-outline-secondary w-100">Clear</a>
         </div>
       </form>
 
-      <!-- Login Attempts -->
-      <h5>Recent Login Attempts</h5>
-      <div class="table-responsive mb-4">
-        <table class="table table-striped table-bordered align-middle">
-          <thead class="table-dark">
+      <div class="table-responsive mb-5">
+        <table class="table table-hover table-bordered align-middle">
+          <thead class="table-dark text-center">
             <tr>
               <th>Timestamp</th>
               <th>User ID</th>
               <th>Email</th>
-              <th>Success</th>
+              <th>Status</th>
               <th>IP</th>
               <th>Location</th>
               <th>User Agent</th>
@@ -84,10 +236,16 @@
               <tr>
                 <td>{{ log.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td>
                 <td>{{ log.user_id or 'N/A' }}</td>
-                <td>{{ log.email }}</td>
-                <td>{% if log.success %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-danger">No</span>{% endif %}</td>
+                <td class="truncate">{{ log.email }}</td>
+                <td class="text-center">
+                  {% if log.success %}
+                    <span class="badge bg-success">Yes</span>
+                  {% else %}
+                    <span class="badge bg-danger">No</span>
+                  {% endif %}
+                </td>
                 <td>{{ log.ip_address }}</td>
-                <td>{{ log.location or 'Unknown' }}</td>
+                <td class="truncate">{{ log.location or 'Unknown' }}</td>
                 <td class="truncate">{{ log.user_agent }}</td>
               </tr>
             {% else %}
@@ -97,11 +255,11 @@
         </table>
       </div>
 
-      <!-- Known Devices -->
-      <h5>Known Devices</h5>
-      <div class="table-responsive mb-4">
-        <table class="table table-striped table-bordered align-middle">
-          <thead class="table-dark">
+      <!-- ===================== Known Devices ===================== -->
+      <h4 class="section-title">Known Devices</h4>
+      <div class="table-responsive mb-5">
+        <table class="table table-hover table-bordered align-middle">
+          <thead class="table-dark text-center">
             <tr>
               <th>User ID</th>
               <th>Device Hash</th>
@@ -119,7 +277,7 @@
                 <td>{{ device.device_hash[:10] }}...</td>
                 <td>{{ device.ip_address }}</td>
                 <td class="truncate">{{ device.user_agent }}</td>
-                <td>{{ device.location or 'Unknown' }}</td>
+                <td class="truncate">{{ device.location or 'Unknown' }}</td>
                 <td>{{ device.first_seen.strftime("%Y-%m-%d %H:%M:%S") }}</td>
                 <td>{{ device.last_seen.strftime("%Y-%m-%d %H:%M:%S") }}</td>
               </tr>
@@ -130,10 +288,11 @@
         </table>
       </div>
 
-      <!-- System Audit Logs -->
-      <h5>System Audit Logs</h5>
-      <form method="get" class="row g-3 mb-3">
+      <!-- ===================== System Audit Logs ===================== -->
+      <h4 class="section-title">System Audit Logs</h4>
+      <form method="get" class="row g-3 mb-3 filter-form">
         <div class="col-md-2">
+          <label class="form-label">User ID</label>
           <select class="form-select" name="user_id">
             <option value="">All User IDs</option>
             {% for uid in user_ids %}
@@ -142,6 +301,7 @@
           </select>
         </div>
         <div class="col-md-2">
+          <label class="form-label">Action</label>
           <select class="form-select" name="action_type">
             <option value="">All Actions</option>
             {% for action in action_types %}
@@ -150,6 +310,7 @@
           </select>
         </div>
         <div class="col-md-2">
+          <label class="form-label">Category</label>
           <select class="form-select" name="category">
             <option value="">All Categories</option>
             {% for cat in categories %}
@@ -158,6 +319,7 @@
           </select>
         </div>
         <div class="col-md-2">
+          <label class="form-label">Level</label>
           <select class="form-select" name="log_level">
             <option value="">All Levels</option>
             <option value="INFO" {% if request.args.get('log_level') == 'INFO' %}selected{% endif %}>INFO</option>
@@ -166,51 +328,83 @@
           </select>
         </div>
         <div class="col-md-2">
+          <label class="form-label">IP</label>
           <input type="text" class="form-control" name="ip" placeholder="IP Address" value="{{ request.args.get('ip', '') }}">
         </div>
         <div class="col-md-2">
+          <label class="form-label">Endpoint</label>
           <input type="text" class="form-control" name="endpoint" placeholder="Endpoint" value="{{ request.args.get('endpoint', '') }}">
         </div>
         <div class="col-md-2">
+          <label class="form-label">From</label>
           <input type="date" class="form-control" name="start_date" value="{{ request.args.get('start_date', '') }}">
         </div>
         <div class="col-md-2">
+          <label class="form-label">To</label>
           <input type="date" class="form-control" name="end_date" value="{{ request.args.get('end_date', '') }}">
         </div>
-        <div class="col-md-2 d-flex">
+        <div class="col-md-2 d-flex align-items-end">
           <button type="submit" class="btn btn-outline-primary me-2 w-100">Filter</button>
           <a href="{{ url_for('security_dashboard') }}" class="btn btn-outline-secondary w-100">Clear</a>
         </div>
       </form>
 
       <div class="table-responsive">
-        <table class="table table-striped table-bordered align-middle">
-          <thead class="table-dark">
+        <table class="table table-hover table-bordered align-middle">
+          <thead class="table-dark text-center">
             <tr>
               <th>Timestamp</th>
               <th>User ID</th>
-              <th>Action Type</th>
+              <th>Action</th>
               <th>Category</th>
               <th>Level</th>
               <th>Description</th>
               <th>Endpoint</th>
               <th>Method</th>
               <th>IP</th>
-              <th>Session ID</th>
-              <th>Request ID</th>
+              <th>Session</th>
+              <th>Request</th>
               <th>Changed Fields</th>
               <th>Role ID</th>
             </tr>
           </thead>
           <tbody>
             {% for log in audit_logs %}
+              {% set modal_id = 'descModal-' ~ (log.id if log.id is defined and log.id else 'row' ~ loop.index) %}
               <tr>
                 <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                 <td>{{ log.user_id or 'N/A' }}</td>
                 <td>{{ log.action_type }}</td>
                 <td>{{ log.category }}</td>
-                <td>{{ log.log_level }}</td>
-                <td class="truncate">{{ log.description or '' }}</td>
+                <td>
+                  {% if log.log_level == 'CRITICAL' %}
+                    <span class="badge bg-danger">CRITICAL</span>
+                  {% elif log.log_level == 'WARNING' %}
+                    <span class="badge bg-warning text-dark">WARNING</span>
+                  {% else %}
+                    <span class="badge bg-secondary">{{ log.log_level }}</span>
+                  {% endif %}
+                </td>
+
+                <!-- Description with modal -->
+                <td class="truncate">
+                  {% if log.description %}
+                    {% if log.description|length > 30 %}
+                      {{ log.description[:30] ~ '...' }}
+                      <button type="button"
+                              class="btn btn-link btn-sm p-0 align-baseline ms-2"
+                              data-bs-toggle="modal"
+                              data-bs-target="#{{ modal_id }}">
+                        View
+                      </button>
+                    {% else %}
+                      {{ log.description }}
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+
                 <td>{{ log.endpoint }}</td>
                 <td>{{ log.http_method }}</td>
                 <td>{{ log.ip_address }}</td>
@@ -219,13 +413,33 @@
                 <td class="truncate">{{ log.changed_fields[:30] ~ '...' if log.changed_fields else '' }}</td>
                 <td>{{ log.role_id_at_action_time or 'N/A' }}</td>
               </tr>
+
+              {% if log.description and log.description|length > 30 %}
+              <div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-lg modal-dialog-centered">
+                  <div class="modal-content">
+                    <div class="modal-header bg-dark text-white">
+                      <h5 class="modal-title">Full Description</h5>
+                      <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                      <pre style="white-space: pre-wrap; margin:0;">{{ log.description }}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
             {% else %}
               <tr><td colspan="13" class="text-center">No system audit logs found.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+
     </div>
   </div>
 </div>
+
+{# Needed for modals/progress tooltips (HTML-only, no Python) #}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 {% endblock %}

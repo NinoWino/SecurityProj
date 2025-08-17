@@ -1,20 +1,80 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container mt-5">
-  <h2>{{ product.name }}</h2>
-  <p class="text-muted">${{ product.price }}</p>
-  <p>{{ product.description }}</p>
+<div class="container py-5">
+  <a href="{{ url_for('products') }}" class="text-decoration-none">&larr; Back to products</a>
 
-  {% if product.image_url %}
-  <img src="{{ product.image_url }}" class="img-fluid mb-3">
-  {% endif %}
+  <div class="row g-4 mt-1">
+    <div class="col-12 col-lg-6">
+      {% if product.image_filename %}
+        <img
+          src="{{ url_for('static', filename='uploads/' ~ product.image_filename) }}"
+          alt="{{ product.name }}"
+          class="w-100 rounded shadow-sm"
+          style="aspect-ratio: 4/3; object-fit: cover;">
+      {% else %}
+        <div class="bg-light w-100 rounded d-flex align-items-center justify-content-center"
+             style="aspect-ratio: 4/3;">
+          <span class="text-muted">No image available</span>
+        </div>
+      {% endif %}
+    </div>
 
-<button class="btn btn-success add-to-cart"
-        data-id="{{ product.id }}"
-        data-name="{{ product.name }}"
-        data-price="{{ product.price }}">
-  Add to Cart
-</button>
-  <a href="/checkout" class="btn btn-outline-primary ms-2">Checkout</a>
+    <div class="col-12 col-lg-6">
+      <h2 class="mb-2">{{ product.name }}</h2>
+      <div class="h4 text-success mb-3">${{ '%.2f'|format(product.price) }}</div>
+
+      {% if product.description %}
+        <p class="text-muted">{{ product.description }}</p>
+      {% endif %}
+
+      <div class="d-flex align-items-center gap-2 mb-3">
+        <label for="qty" class="form-label m-0">Qty</label>
+        <input id="qty" type="number" min="1" value="1" class="form-control" style="width: 110px;">
+      </div>
+
+      <div class="d-flex gap-2">
+        <button id="addCartBtn"
+                class="btn btn-success"
+                data-id="{{ product.id }}"
+                data-name="{{ product.name }}"
+                data-price="{{ product.price }}">
+          Add to Cart
+        </button>
+        <a href="{{ url_for('checkout') }}" class="btn btn-outline-primary">Checkout</a>
+      </div>
+    </div>
+  </div>
 </div>
+
+<script>
+(function () {
+  function getCart(){ try { return JSON.parse(localStorage.getItem('cart') || '[]'); } catch { return []; } }
+  function setCart(cart){
+    localStorage.setItem('cart', JSON.stringify(cart));
+    if (window.updateCartUI) window.updateCartUI();
+  }
+
+  const btn = document.getElementById('addCartBtn');
+  const qtyEl = document.getElementById('qty');
+  if (btn) {
+    btn.addEventListener('click', function(){
+      const id = parseInt(this.dataset.id, 10);
+      const name = this.dataset.name;
+      const price = parseFloat(this.dataset.price);
+      const qty = Math.max(1, parseInt(qtyEl.value, 10) || 1);
+
+      const cart = getCart();
+      const existing = cart.find(i => i.id === id);
+      if (existing) existing.qty += qty; else cart.push({ id, name, price, qty });
+      setCart(cart);
+
+      // Tiny UX feedback
+      this.classList.remove('btn-success'); this.classList.add('btn-secondary');
+      this.textContent = 'Added!';
+      setTimeout(() => { this.classList.add('btn-success'); this.classList.remove('btn-secondary'); this.textContent = 'Add to Cart'; }, 1200);
+    });
+  }
+})();
+</script>
+
 {% endblock %}
