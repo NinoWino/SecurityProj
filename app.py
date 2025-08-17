@@ -174,40 +174,59 @@ def get_public_ip():
 
 def get_location_data(_unused=None):
     ip = get_public_ip()
+    result = {
+        'ip': ip,
+        'city': 'Unknown',
+        'region': 'Unknown',
+        'country': 'Unknown',
+        'asn': 'Unknown',
+        'org': 'Unknown',
+        'isp': 'Unknown',
+        'domain': 'Unknown',
+        'anonymous': False,
+        'proxy': False,
+        'vpn': False,
+        'tor': False,
+        'hosting': False
+    }
+
+    # ---- 1) Base IPWHOIS data ----
     try:
         res = requests.get(f'https://ipwhois.app/json/{ip}', timeout=3)
         data = res.json()
-        return {
-            'ip': ip,
+        result.update({
             'city': data.get('city', 'Unknown'),
             'region': data.get('region', 'Unknown'),
             'country': data.get('country', 'Unknown'),
             'asn': data.get('asn', 'Unknown'),
             'org': data.get('org', 'Unknown'),
             'isp': data.get('isp', 'Unknown'),
-            'domain': data.get('domain', 'Unknown'),
-            'anonymous': data.get('security', {}).get('anonymous', False),
-            'proxy': data.get('security', {}).get('proxy', False),
-            'vpn': data.get('security', {}).get('vpn', False),
-            'tor': data.get('security', {}).get('tor', False),
-            'hosting': data.get('security', {}).get('hosting', False)
-        }
-    except Exception:
-        return {
-            'ip': ip,
-            'city': 'Unknown',
-            'region': 'Unknown',
-            'country': 'Unknown',
-            'asn': 'Unknown',
-            'org': 'Unknown',
-            'isp': 'Unknown',
-            'domain': 'Unknown',
-            'anonymous': False,
-            'proxy': False,
-            'vpn': False,
-            'tor': False,
-            'hosting': False
-        }
+            'domain': data.get('domain', 'Unknown')
+        })
+    except Exception as e:
+        print("ipwhois error:", e)
+
+    # ---- 2) FraudScore enrichment ----
+    try:
+        api_key = os.getenv("FRAUD_API_KEY")
+        if api_key:
+            r = requests.get(
+                f"https://ipqualityscore.com/api/json/ip/{api_key}/{ip}",
+                params={"strictness": 1, "fast": "true"},
+                timeout=4
+            )
+            fs = r.json()
+            # overwrite security-related flags from fraud score
+            result['proxy']   = bool(fs.get("proxy") or fs.get("active_proxy") or fs.get("open_proxy"))
+            result['vpn']     = bool(fs.get("vpn") or fs.get("active_vpn"))
+            result['tor']     = bool(fs.get("tor") or fs.get("active_tor"))
+            result['hosting'] = bool(fs.get("hosting") or fs.get("datacenter") or fs.get("is_datacenter"))
+            result['anonymous'] = any([result['proxy'], result['vpn'], result['tor']])
+    except Exception as e:
+        print("FraudScore enrichment error:", e)
+
+    return result
+
 
 def get_device_info(user_agent_string):
     ua = parse_ua(user_agent_string)
@@ -239,11 +258,33 @@ def check_session_timeout():
             return redirect(url_for('force_password_reset'))
 
 def send_login_alert_email(user):
+    """
+    Send a login alert email to the user.
+    Network anonymity flags (VPN/Proxy/Tor/Hosting) now come from the fraud-score
+    provider (IPQS via check_fraud_risk), not ipwhois' security fields.
+    """
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     ua_string = request.headers.get('User-Agent', '')
-    location = get_location_data()
+    location = get_location_data()  # still used for geo/ISP/asn/org fields
     device_info = get_device_info(ua_string)
     sg_time = datetime.utcnow().replace(tzinfo=timezone('UTC')).astimezone(timezone('Asia/Singapore'))
+
+    # --- Pull fraud flags from your risk provider (IPQS) ---
+    risk = check_fraud_risk(email=user.email, ip=ip, user_agent=ua_string)
+    raw = risk.get("raw") or {}
+
+    # Normalize booleans from IPQS
+    vpn     = bool(raw.get("vpn") or raw.get("active_vpn"))
+    proxy   = bool(raw.get("proxy") or raw.get("active_proxy") or raw.get("open_proxy"))
+    tor     = bool(raw.get("tor") or raw.get("active_tor"))
+    hosting = bool(
+        raw.get("datacenter") or raw.get("is_datacenter")
+        or ("hosting" in (raw.get("connection_type") or "").lower())
+    )
+
+    score  = int(risk.get("score", 0) or 0)
+    level  = risk.get("level") or _risk_level(score)
+    reason = risk.get("reason") or "—"
 
     msg = Message(
         subject="New Login to Your Account",
@@ -251,27 +292,30 @@ def send_login_alert_email(user):
         body=(
             f"Hi {user.username},\n\n"
             f"A new login to your account was detected:\n\n"
-            f"📍 IP Address: {location['ip']}\n"
-            f"🌍 Location: {location['city']}, {location['region']}, {location['country']}\n"
-            f"🔌 ISP: {location['isp']}\n"
-            f"🏢 Organization: {location['org']}\n"
-            f"🌐 Domain: {location['domain']}\n"
-            f"📡 ASN: {location['asn']}\n\n"
+            f"📍 IP Address: {location.get('ip')}\n"
+            f"🌍 Location: {location.get('city')}, {location.get('region')}, {location.get('country')}\n"
+            f"🔌 ISP: {location.get('isp')}\n"
+            f"🏢 Organization: {location.get('org')}\n"
+            f"🌐 Domain: {location.get('domain')}\n"
+            f"📡 ASN: {location.get('asn')}\n\n"
             f"💻 Device: {device_info}\n"
             f"🕒 Time: {sg_time.strftime('%Y-%m-%d %H:%M:%S')} SGT\n\n"
-            f"🛡️ Network Anonymity:\n"
-            f"  - VPN: {'Yes' if location['vpn'] else 'No'}\n"
-            f"  - Proxy: {'Yes' if location['proxy'] else 'No'}\n"
-            f"  - Tor: {'Yes' if location['tor'] else 'No'}\n"
-            f"  - Hosting Provider: {'Yes' if location['hosting'] else 'No'}\n\n"
+            f"🛡️ Network Anonymity (from risk provider):\n"
+            f"  - VPN: {'Yes' if vpn else 'No'}\n"
+            f"  - Proxy: {'Yes' if proxy else 'No'}\n"
+            f"  - Tor: {'Yes' if tor else 'No'}\n"
+            f"  - Hosting Provider: {'Yes' if hosting else 'No'}\n\n"
+            f"⚠️ Fraud Risk: {level} (score {score})\n"
+            f"Reason(s): {reason}\n\n"
             "If this wasn’t you, please reset your password or contact support immediately."
         )
     )
     try:
         mail.send(msg)
     except Exception as e:
-        flash("Failed to send email. Please try again later.", "danger")
-        return redirect(url_for('login'))
+        # Keep this quiet to avoid breaking the login flow; log server-side instead.
+        current_app.logger.warning("send_login_alert_email failed: %s", e)
+
 
 def send_otp_email(user, subject, body_template):
     from flask_mail import Message
@@ -1071,8 +1115,8 @@ def login():
 
     form = LoginForm()
     error = None
-    LOCK_DURATION = timedelta(seconds=60)
-    MAX_ATTEMPTS = 3
+    LOCK_DURATION = timedelta(seconds=30)
+    MAX_ATTEMPTS = 2
 
     # grab client info
     ip, location_str, _ = get_ip_and_location()
@@ -1233,7 +1277,6 @@ def login():
                         ), "danger")
                         return redirect(url_for('login'))
 
-                # ---- Risk-based fraud check (IPQS) ----
                 threshold = int(os.getenv('FRAUD_THRESHOLD', '75'))
                 action = (os.getenv('FRAUD_FAIL_ACTION', 'step_up') or 'step_up').lower()
 
@@ -1245,7 +1288,19 @@ def login():
                         flash("Your sign-in looks risky and was blocked. Please contact support.", "danger")
                         return redirect(url_for('login'))
 
-                    # Step-up to Email OTP
+                    # ✅ If user has TOTP, require TOTP FIRST, then email OTP
+                    if user.preferred_2fa == 'totp' and user.totp_secret:
+                        session['pre_2fa_user_id'] = user.id
+                        session['totp_otp_attempts'] = 0
+                        # Flag that after TOTP we must do email OTP step-up
+                        session['stepup_after_totp'] = {
+                            "score": int(risk.get("score", 0)),
+                            "reason": risk.get("reason")
+                        }
+                        flash("We detected a risky sign-in. Please confirm with your Authenticator first.", "warning")
+                        return redirect(url_for('two_factor_totp'))
+
+                    # Otherwise fall back to your existing email-OTP step-up
                     session['pre_2fa_user_id'] = user.id
                     session['login_otp_attempts'] = 0
                     code = f"{random.randint(0, 999999):06d}"
@@ -1257,7 +1312,8 @@ def login():
                         mail.send(Message(
                             subject="Extra Verification Required",
                             recipients=[user.email],
-                            body=f"Hi {user.username},\n\nWe detected a risky sign-in. Your verification code is: {code}\nIt expires in 5 minutes."
+                            body=f"Hi {user.username},\n\nWe detected a risky sign-in. "
+                                 f"Your verification code is: {code}\nIt expires in 5 minutes."
                         ))
                     except Exception:
                         flash("Failed to send OTP. Try again later.", "danger")
@@ -1400,11 +1456,11 @@ def auth_callback():
     # 3) First‐time creation: default 2FA off
     if not user:
         user = User(
-            username         = user_info.get('name') or email.split('@')[0],
-            email            = email,
-            password         = generate_password_hash(os.urandom(16).hex()),
-            role_id          = 1,
-            signup_method    = 'google',
+            username           = user_info.get('name') or email.split('@')[0],
+            email              = email,
+            password           = generate_password_hash(os.urandom(16).hex()),
+            role_id            = 1,
+            signup_method      = 'google',
             two_factor_enabled = False
         )
         db.session.add(user)
@@ -1424,7 +1480,7 @@ def auth_callback():
         if not user.last_country:
             user.last_country = current_country
             db.session.commit()
-            # ✅ Log the login
+        # ✅ Log the login (attempt)
         log_system_action(
             user_id=user.id,
             action_type="Login (Google)",
@@ -1461,31 +1517,49 @@ def auth_callback():
     risk = check_fraud_risk(email=user.email, ip=ip, user_agent=user_agent)
     log_fraud_event(user_id=user.id, where='google', risk=risk, ip=ip, user_agent=user_agent)
 
+    # If risky, prefer TOTP first (if available), then email OTP as a second step.
     if risk.get('score', 0) >= threshold or risk.get('risky'):
         if action == 'block':
             flash("Your sign-in looks risky and was blocked. Please contact support.", "danger")
             return redirect(url_for('login'))
 
-        # Step-up to Email OTP
-        session['pre_2fa_user_id'] = user.id
-        session['login_otp_attempts'] = 0
-        code = f"{random.randint(0, 999999):06d}"
-        user.otp_code = generate_password_hash(code)
-        user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
-        db.session.commit()
+        if user.preferred_2fa == 'totp' and user.totp_secret:
+            # Mark that we need an email OTP after TOTP succeeds
+            session['stepup_after_totp'] = {
+                "score": risk.get("score"),
+                "level": risk.get("level"),
+                "reason": risk.get("reason"),
+            }
+            session['pre_2fa_user_id'] = user.id
+            session['totp_otp_attempts'] = 0
+            flash("Extra verification required after your authenticator code.", "warning")
+            return redirect(url_for('two_factor_totp'))
+        else:
+            # No TOTP → step-up directly to email OTP
+            session['pre_2fa_user_id'] = user.id
+            session['login_otp_attempts'] = 0
+            code = f"{random.randint(0, 999999):06d}"
+            user.otp_code = generate_password_hash(code)
+            user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+            db.session.commit()
 
-        mail.send(Message(
-            subject="Extra Verification Required",
-            recipients=[user.email],
-            body=f"Hi {user.username},\n\nWe detected a risky sign-in. Your verification code is: {code}\nIt expires in 5 minutes."
-        ))
-        flash("We detected a risky sign-in. Please complete the one-time code we emailed you.", "warning")
-        return redirect(url_for('two_factor'))
+            try:
+                mail.send(Message(
+                    subject="Extra Verification Required",
+                    recipients=[user.email],
+                    body=f"Hi {user.username},\n\nWe detected a risky sign-in. Your verification code is: {code}\nIt expires in 5 minutes."
+                ))
+            except Exception:
+                flash("Failed to send OTP. Try again later.", "danger")
+                return redirect(url_for('login'))
+
+            flash("We detected a risky sign-in. Please complete the one-time code we emailed you.", "warning")
+            return redirect(url_for('two_factor'))
 
     # ── TOTP 2FA ───────────────────────────────────────────────
     if user.preferred_2fa == 'totp' and user.totp_secret:
         session['pre_2fa_user_id'] = user.id
-        session['totp_otp_attempts'] = 0  # ← Add this
+        session['totp_otp_attempts'] = 0
         return redirect(url_for('two_factor_totp'))
 
     # ── Email-OTP 2FA ─────────────────────────────────────────
@@ -1506,7 +1580,6 @@ def auth_callback():
     # ── Final login ───────────────────────────────────────────
     login_user(user)
     session['last_active'] = datetime.utcnow().isoformat()
-    success = True
     session.pop('bypass_security', None)
     session.pop('backup_user_id', None)
     send_login_alert_email(user)
@@ -1516,6 +1589,7 @@ def auth_callback():
         return redirect(url_for('collect_birthdate'))
 
     return redirect(url_for('profile'))
+
 
 @app.route('/collect_birthdate', methods=['GET','POST'])
 @login_required
@@ -1948,6 +2022,12 @@ def two_factor_totp():
         return redirect(url_for('login'))
 
     user = db.session.get(User, user_id)
+    if not user or not user.totp_secret:
+        # If we somehow got here without a secret, fall back to login
+        flash("Your authenticator isn’t set up. Please sign in again.", "warning")
+        session.pop('pre_2fa_user_id', None)
+        return redirect(url_for('login'))
+
     totp = pyotp.TOTP(user.totp_secret)
 
     attempts = session.get('totp_otp_attempts', 0)
@@ -1959,17 +2039,52 @@ def two_factor_totp():
 
     if form.validate_on_submit():
         token = form.token.data.strip()
-        if totp.verify(token):
+
+        # Allow ±1 step drift to reduce false negatives (optional)
+        if totp.verify(token, valid_window=1):
+            # Success: clear attempt counter now
+            session.pop('totp_otp_attempts', None)
+
+            # If high-risk step-up is required, send email OTP next
+            stepup = session.pop('stepup_after_totp', None)
+            if stepup:
+                # Clear any prior OTP state (hygiene, optional)
+                user.otp_code = None
+                user.otp_expiry = None
+
+                session['pre_2fa_user_id'] = user.id
+                session['login_otp_attempts'] = 0
+
+                code = f"{random.randint(0, 999999):06d}"
+                user.otp_code = generate_password_hash(code)
+                user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+                db.session.commit()
+
+                try:
+                    mail.send(Message(
+                        subject="Extra Verification Required",
+                        recipients=[user.email],
+                        body=(f"Hi {user.username},\n\nWe detected a risky sign-in (score "
+                              f"{stepup.get('score', '—')}). Your verification code is: {code}\n"
+                              "It expires in 5 minutes.")
+                    ))
+                except Exception:
+                    flash("Failed to send OTP. Try again later.", "danger")
+                    return redirect(url_for('login'))
+
+                flash("Extra verification required. We sent a one-time code to your email.", "warning")
+                return redirect(url_for('two_factor'))
+
+            # Normal successful TOTP login
             login_user(user)
             session.pop('pre_2fa_user_id', None)
-            session.pop('totp_otp_attempts', None)
             session['last_active'] = datetime.utcnow().isoformat()
             user.failed_attempts = 0
             user.otp_code = None
             user.otp_expiry = None
             db.session.commit()
 
-            # ✅ Add audit log here
+            # Audit log
             ip, location_str, _ = get_ip_and_location()
             user_agent = request.headers.get('User-Agent')
             db.session.add(LoginAuditLog(
@@ -1989,6 +2104,7 @@ def two_factor_totp():
             error = 'Invalid code. Please try again.'
 
     return render_template('two_factor_totp.html', form=form, error=error)
+
 
 
 

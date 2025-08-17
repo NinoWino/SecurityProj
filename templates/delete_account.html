@@ -1,10 +1,21 @@
-
 {% extends "base.html" %}
 {% block content %}
-<div class="container mt-5 col-md-5 mx-auto">
-  <h3 class="text-danger">Delete Account</h3>
-  <p>This action is irreversible. Are you sure you want to delete your account?</p>
-        {% with messages = get_flashed_messages(with_categories=true) %}
+<div class="container mt-5 col-md-7 col-lg-6 mx-auto">
+  <div class="card shadow-sm">
+    <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center">
+      <h3 class="mb-0">Delete Account</h3>
+      <a href="{{ url_for('security') }}" class="btn btn-sm btn-outline-light">
+        ← Back
+      </a>
+    </div>
+    <div class="card-body">
+
+      <p class="text-muted">
+        ⚠️ This action is <strong>irreversible</strong>. Please confirm your identity and security question before continuing.
+      </p>
+
+      <!-- ✅ Flash messages -->
+      {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
             <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
@@ -14,40 +25,46 @@
           {% endfor %}
         {% endif %}
       {% endwith %}
-  <form id="deleteForm" method="POST">
-    {{ form.hidden_tag() }}
 
-    <div class="mb-3">
-      {{ form.password.label(class="form-label") }}
-      {{ form.password(class="form-control") }}
+      <form id="deleteForm" method="POST">
+        {{ form.hidden_tag() }}
+
+        <div class="mb-3">
+          {{ form.password.label(class="form-label") }}
+          {{ form.password(class="form-control") }}
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Security Question</label>
+          <p><strong>{{ current_user.security_question }}</strong></p>
+          {{ form.security_answer(class="form-control") }}
+          {% for error in form.security_answer.errors %}
+            <div class="text-danger small">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <!-- Trigger modal instead of direct submit -->
+        <div class="d-grid">
+          <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#confirmDeleteModal">
+            Delete Account
+          </button>
+        </div>
+      </form>
     </div>
-
-    <div class="mb-3">
-      <label class="form-label">Security Question:</label>
-      <p><strong>{{ current_user.security_question }}</strong></p>
-      {{ form.security_answer(class="form-control") }}
-      {% for error in form.security_answer.errors %}
-        <div class="text-danger">{{ error }}</div>
-      {% endfor %}
-    </div>
-
-    <!-- Trigger modal instead of direct submit -->
-    <button type="button" class="btn btn-danger w-100" data-bs-toggle="modal" data-bs-target="#confirmDeleteModal">
-      Delete Account
-    </button>
-  </form>
+  </div>
 </div>
 
 <!-- Confirmation Modal -->
 <div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-labelledby="confirmDeleteLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
+    <div class="modal-content border-danger">
       <div class="modal-header bg-danger text-white">
-        <h5 class="modal-title" id="confirmDeleteLabel">Confirm Deletion</h5>
+        <h5 class="modal-title" id="confirmDeleteLabel">⚠️ Confirm Deletion</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <p>This action cannot be undone. Are you sure you want to delete your account?</p>
+        <p>This will <strong>permanently</strong> delete your account and all associated data.</p>
+        <p class="text-danger fw-bold mb-0">Are you absolutely sure?</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
