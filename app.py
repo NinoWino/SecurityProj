@@ -135,7 +135,7 @@ limiter = Limiter(
 )
 
 # --- Password expiry window (defaults to 3 minutes for testing) ---
-PASSWORD_MAX_AGE = timedelta(minutes=int(os.getenv('PASSWORD_MAX_AGE_MINUTES', '1000')))
+PASSWORD_MAX_AGE = timedelta(minutes=int(os.getenv('PASSWORD_MAX_AGE_MINUTES', '100000')))
 
 def password_is_expired(user) -> bool:
     ref = getattr(user, 'password_last_changed', None) or getattr(user, 'created_at', None)
@@ -460,11 +460,26 @@ def admin_force_password_reset(user_id):
         flash("You cannot force a password reset for your own account.", "warning")
         return redirect(url_for('manage_users'))
 
+    # ── Skip for Google OAuth accounts (no local password to reset) ───────────
+    if (user.signup_method or '').lower() == 'google':
+        flash("This account signs in with Google. Password resets are not applicable.", "info")
+        try:
+            log_system_action(
+                user_id=current_user.id,
+                action_type="Admin Force Password Reset (skipped)",
+                description=f"Skipped force reset for Google account user_id={user.id} ({user.email})",
+                category="ADMIN",
+                affected_object_id=user.id,
+                changed_fields={}
+            )
+        except Exception as e:
+            print("audit log failed:", e)
+        return redirect(url_for('manage_users'))
+
     # Flip the flag
     previous = getattr(user, 'force_password_reset', False)
     user.force_password_reset = True
     db.session.commit()
-
 
     # Audit
     try:
@@ -481,6 +496,7 @@ def admin_force_password_reset(user_id):
 
     flash(f"'{user.username}' will be prompted to change password on next login.", "success")
     return redirect(url_for('manage_users'))
+
 
 
 def log_system_action(
@@ -1181,12 +1197,14 @@ def login():
             return redirect(url_for('login'))
 
             # Handle force password reset case
-        if getattr(user, 'force_password_reset', False) or password_is_expired(user):
-            # Mark the user who must reset, then send them to the reset screen.
+        # Handle force password reset case (skip for Google OAuth users)
+        if user and (user.signup_method or '').lower() != 'google' and (
+                getattr(user, 'force_password_reset', False) or password_is_expired(user)
+        ):
             session['expired_user_id'] = user.id
-            # (If you currently log them in here, consider skipping login until reset is done)
             flash('Your password has expired and must be changed.', 'warning')
             return redirect(url_for('force_password_reset'))
+
         if user:
             # → account lockout
             if user.is_locked:
@@ -1349,9 +1367,10 @@ def login():
 
                     return redirect(url_for('two_factor'))
                 # ---- Forced password reset gate (admin-triggered) ----
-                if getattr(user, 'force_password_reset', False) or password_is_expired(user):
-                    # Do NOT log them in yet; send them to change their password
-                    session['expired_user_id'] = user.id  # optional: reuse your existing flow var
+                if user and (user.signup_method or '').lower() != 'google' and (
+                        getattr(user, 'force_password_reset', False) or password_is_expired(user)
+                ):
+                    session['expired_user_id'] = user.id
                     flash("Please set a new password to continue.", "warning")
                     return redirect(url_for('change_password'))
 
@@ -1445,6 +1464,10 @@ def auth_callback():
     stmt = select(User).filter_by(email=email)
     user = db.session.scalars(stmt).first()
 
+    if user and not user.is_active:
+        flash("Your account has been deactivated. Please contact support.", "danger")
+        return redirect(url_for('login'))
+
     # 2) Block non-Google signup methods
     if user and (user.signup_method or '').lower() != 'google':
         flash(
@@ -1480,13 +1503,6 @@ def auth_callback():
         if not user.last_country:
             user.last_country = current_country
             db.session.commit()
-        # ✅ Log the login (attempt)
-        log_system_action(
-            user_id=user.id,
-            action_type="Login (Google)",
-            description="User successfully logged in via Google.",
-            category="AUTH"
-        )
 
     # User defined time based access control
     if is_user_blocked_by_time(user) and not session.get('bypass_security'):
@@ -1582,6 +1598,15 @@ def auth_callback():
     session['last_active'] = datetime.utcnow().isoformat()
     session.pop('bypass_security', None)
     session.pop('backup_user_id', None)
+
+    # ✅ Log the login (attempt)
+    log_system_action(
+        user_id=user.id,
+        action_type="Login (Google)",
+        description="User successfully logged in via Google.",
+        category="AUTH"
+    )
+
     send_login_alert_email(user)
 
     # Prompt for birthdate if missing
